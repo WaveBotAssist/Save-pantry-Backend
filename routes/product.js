@@ -1,11 +1,12 @@
 var express = require('express');
 var router = express.Router();
-const Product = require('../models/product')
-const User = require('../models/users')
-const checkToken = require('../middlewares/checkToken');
+const Product = require('../models/product');
+const User = require('../models/users');
+// Chargement de i18next pour la gestion des traductions
+const i18next = require('i18next');
 
 // Route pour ajouter un nouveau produit dans la collection products ou myproducts.
-router.post('/addproduct', checkToken, async (req, res) => {
+router.post('/addproduct', async (req, res) => {
   try {
     const userId = req.user._id; // Récupérer l'ID de l'utilisateur à partir du token
     const { codebarre, name, categorie, prix, unit, image, expiration, emplacement, quantite, calorie, magasin } = req.body;
@@ -116,11 +117,10 @@ router.post('/addproduct', checkToken, async (req, res) => {
 
 // Route pour mettre à jour les données dans le sous-document myproducts
 
-router.put('/myproducts/:productId', checkToken, async (req, res) => {
+router.put('/myproducts/:productId', async (req, res) => {
   const userId = req.user._id; // Récupérer l'ID de l'utilisateur à partir du token grace a checkToken middleware
   const { productId } = req.params; // L'identifiant du produit
   const { codebarre, prix, ...otherUpdates } = req.body;
-  console.log(otherUpdates)
   if (!userId) {
     return res.status(401).json({ result: false, error: "Token manquant" });
   }
@@ -156,7 +156,7 @@ router.put('/myproducts/:productId', checkToken, async (req, res) => {
 
 // Route pour supprimer un produit dans le sous-document myproducts d'un utilisateur.
 
-router.delete('/deleteProduct/:productId', checkToken, async (req, res) => {
+router.delete('/deleteProduct/:productId', async (req, res) => {
   try {
     const userId = req.user._id; // Récupérer l'ID de l'utilisateur à partir du token
     const { productId } = req.params; // ID du produit à supprimer
@@ -171,7 +171,7 @@ router.delete('/deleteProduct/:productId', checkToken, async (req, res) => {
       { $pull: { myproducts: { _id: productId } } }, // Retirer le produit par son `_id`
       { new: true } // Retourner l'utilisateur mis à jour
     );
-    
+
     if (!updatedUser) {
       return res.status(404).json({ result: false, message: "Utilisateur introuvable ou produit non existant." });
     }
@@ -213,5 +213,97 @@ router.get('/getproducts/code/:codebarre', (req, res) => {
       res.status(500).json({ result: false, error: err.message });
     });
 })
+
+// Déduire des quantités planifiées du stock de l'utilisateur
+// Body attendu: { items: [{ productId: "<_id du myproduct>", qty: 2 }, ...] }
+router.post('/inventory/consume', async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { items } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ result: false, error: 'items doit être un tableau non vide' });
+    }
+
+    const user = await User.findById(userId).select('myproducts');
+    if (!user) return res.status(404).json({ result: false, error: 'Utilisateur introuvable' });
+
+    // index des sous-documents par _id (string)
+    const byId = new Map(user.myproducts.map(p => [String(p._id), p]));
+
+    // validations
+    for (const it of items) {
+      if (!it?.productId || typeof it.qty !== 'number' || it.qty <= 0) {
+        return res.status(400).json({ result: false, error: 'Chaque item doit avoir productId et qty>0' });
+      }
+      const sub = byId.get(String(it.productId));
+      if (!sub) {
+        return res.status(404).json({ result: false, error: `Produit introuvable dans le stock` });
+      }
+      if ((sub.quantite ?? 0) < it.qty) {
+        return res.status(409).json({
+          result: false,
+          error: 'inventory.insufficientStock'
+        })
+      }
+    }
+
+    // déduction
+    for (const it of items) {
+      const sub = byId.get(String(it.productId));
+      sub.quantite = Math.max(0, (sub.quantite ?? 0) - it.qty);
+      // si tu veux, gère aussi un champ "reserved" ici (ex: sub.reserved = Math.max(0, sub.reserved - it.qty))
+    }
+
+    await user.save();
+    return res.json({ result: true, message: 'Stock mis à jour (consommation).' });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ result: false, error: 'Erreur interne.' });
+  }
+});
+
+
+// Annuler la déduction (récréditer les quantités)
+// Body attendu: { items: [{ productId: "<_id du myproduct>", qty: 2 }, ...] }
+router.post('/inventory/undo', async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { items } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ result: false, error: 'items doit être un tableau non vide' });
+    }
+
+    const user = await User.findById(userId).select('myproducts');
+    if (!user) return res.status(404).json({ result: false, error: 'Utilisateur introuvable' });
+
+    const byId = new Map(user.myproducts.map(p => [String(p._id), p]));
+
+    // validations
+    for (const it of items) {
+      if (!it?.productId || typeof it.qty !== 'number' || it.qty <= 0) {
+        return res.status(400).json({ result: false, error: 'Chaque item doit avoir productId et qty>0' });
+      }
+      const sub = byId.get(String(it.productId));
+      if (!sub) {
+        return res.status(404).json({ result: false, error: `Produit introuvable dans le stock` });
+      }
+    }
+
+    // récrédit
+    for (const it of items) {
+      const sub = byId.get(String(it.productId));
+      sub.quantite = (sub.quantite ?? 0) + it.qty;
+    }
+
+    await user.save();
+    return res.json({ result: true, message: 'Stock rétabli (annulation).' });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ result: false, error: 'Erreur interne.' });
+  }
+});
+
 
 module.exports = router;

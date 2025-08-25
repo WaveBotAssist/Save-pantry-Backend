@@ -1,7 +1,8 @@
-// middlewares/checkToken.js
 const bcrypt = require('bcrypt');
-const { sha256 } = require('../utils/session');
+const crypto = require('crypto');
+const Session = require('../models/session');
 const User = require('../models/users');
+const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
 
 module.exports = async function checkToken(req, res, next) {
   try {
@@ -9,21 +10,24 @@ module.exports = async function checkToken(req, res, next) {
     const raw = auth.startsWith('Bearer ') ? auth.slice(7) : null;
     if (!raw) return res.status(401).json({ error: 'No token' });
 
-    const fp = sha256(raw);
+    const session = await Session.findOne({
+      tokenFingerprint: sha256(raw),
+      expiresAt: { $gt: new Date() },
+      $or: [{ revokedAt: { $exists: false } }, { revokedAt: null }]
+    }).select('userId tokenHash expiresAt');
 
-    const user = await User.findOne({
-      tokenFingerprint: fp,
-      tokenExpiresAt: { $gt: new Date() }
-    }).select('_id username role tokenHash tokenExpiresAt');
-
-    if (!user) return res.status(401).json({ error: 'Invalid or expired token' });
-
-    const ok = await bcrypt.compare(raw, user.tokenHash);
+    if (!session) return res.status(401).json({ error: 'Invalid or expired token' });
+    const ok = await bcrypt.compare(raw, session.tokenHash);
     if (!ok) return res.status(401).json({ error: 'Invalid token' });
 
-    req.user = { _id: user._id, username: user.username, role: user.role };
+    const user = await User.findById(session.userId).select('_id username role');
+    if (!user) return res.status(401).json({ error: 'User not found' });
+
+    req.user = user;
+    req.sessionId = session._id;
     next();
-  } catch (e) {
+  } catch {
     res.status(401).json({ error: 'Auth error' });
   }
 };
+

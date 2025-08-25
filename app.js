@@ -9,6 +9,9 @@ var logger = require('morgan');
 const i18next = require('i18next');
 const Backend = require('i18next-fs-backend');
 const middleware = require('i18next-http-middleware');
+//ajout des middlewares/checkToken.js et slideSessions.js créé pour la gestion des tokens et des sessions
+const checkToken = require('./middlewares/checkToken');
+const slideSession = require('./middlewares/slideSession');
 
 i18next
   .use(Backend)
@@ -32,6 +35,7 @@ var notifications = require('./routes/notifications');
 var shoppinglistsRouter = require('./routes/shoppinglists');
 var recipeRouter= require('./routes/recipe');
 const favoritesRouter = require('./routes/favoritesRecipes');
+const auth = require('./routes/auth');
 
 var app = express();
 //important ajout du module cors pour communication frontend a backend
@@ -45,13 +49,19 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(middleware.handle(i18next));
 
+// 🌐 Public
 app.use('/', indexRouter);
+app.use('/auth', auth);          // /auth/signup & /auth/signin doivent rester publics
+app.use('/forgot', forgotRouter); // public
+
+// 👤 /users est "mixte" (expose des routes privées qui font elles-mêmes checkToken à l’intérieur)
 app.use('/users', usersRouter);
-app.use('/product', productRouter);
-app.use('/forgot', forgotRouter);
-app.use('/notifications', notifications);
-app.use('/shoppinglists', shoppinglistsRouter);
-app.use('/recipe',recipeRouter)
-app.use('/favorites', favoritesRouter);
+
+// 🔒 Routers 100% privés → checkToken PUIS slideSession (dans cet ordre)
+app.use('/product',       checkToken, slideSession, productRouter);
+app.use('/notifications', checkToken, slideSession, notifications);
+app.use('/shoppinglists', checkToken, slideSession, shoppinglistsRouter);
+app.use('/recipe',        checkToken, slideSession, recipeRouter);
+app.use('/favorites',     checkToken, slideSession, favoritesRouter);
 
 module.exports = app;

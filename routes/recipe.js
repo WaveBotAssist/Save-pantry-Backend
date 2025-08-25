@@ -1,6 +1,5 @@
 const express = require('express')
 const router = express.Router()
-const checkToken = require('../middlewares/checkToken');
 const checkRole = require('../middlewares/checkRole');
 const User = require('../models/users');
 const Recipes = require('../models/recipe');
@@ -22,7 +21,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 //ci-dessous les deux routes pour upload ou remove une image de R2 cloudflare
 // ---- UPLOAD ROUTE ----
-router.post('/r2/upload', checkToken, upload.single('file'), async (req, res) => {
+router.post('/r2/upload', upload.single('file'), async (req, res) => {
   try {
     const key = `images/${Date.now()}_${req.file.originalname}`;
     const command = new PutObjectCommand({
@@ -40,7 +39,7 @@ router.post('/r2/upload', checkToken, upload.single('file'), async (req, res) =>
 });
 
 // ---- DELETE ROUTE ----
-router.delete('/r2/delete/:key', checkToken, async (req, res) => {
+router.delete('/r2/delete/:key', async (req, res) => {
   try {
     const command = new DeleteObjectCommand({
       Bucket: process.env.R2_BUCKET,
@@ -55,7 +54,7 @@ router.delete('/r2/delete/:key', checkToken, async (req, res) => {
 
 
 //route pour recuperer les alliments de l'user et retourner des recettes qui corresponde a leur produits
-router.post('/myrecipes', checkToken, async (req, res) => {
+router.post('/myrecipes', async (req, res) => {
   try {
     const owner = req.user._id;
     const { manquantMax, categorie, tempsMax, search } = req.body;
@@ -221,7 +220,7 @@ router.post('/myrecipes', checkToken, async (req, res) => {
 });
 
 // Route pour soumettre une recette communautaire
-router.post('/submit', checkToken, async (req, res) => {
+router.post('/submit', async (req, res) => {
   try {
     const {
       titre, categorie, langue, source, url, image,
@@ -264,7 +263,7 @@ router.post('/submit', checkToken, async (req, res) => {
 
 
 // route pour retrouver toutes les recettes que l utilisateur a proposé (utiliser dans MySharedRecipesScreen.js)
-router.get('/my-recipes', checkToken, async (req, res) => {
+router.get('/my-recipes', async (req, res) => {
   try {
     const userId = req.user._id;
     const myRecipes = await Recipes.find({ auteur: userId }).sort({ createdAt: -1 });
@@ -283,7 +282,7 @@ router.get('/recipesList', async (req, res) => {
 
 
 // Lister les pending
-router.get('/mod/pending', checkToken, checkRole('admin'), async (req, res) => {
+router.get('/mod/pending', checkRole('admin'), async (req, res) => {
   const { page = 1, limit = 30 } = req.query;
   const skip = (page - 1) * limit;
   const [items, total] = await Promise.all([
@@ -296,7 +295,7 @@ router.get('/mod/pending', checkToken, checkRole('admin'), async (req, res) => {
 });
 
 // Approuver
-router.post('/mod/:id/approve', checkToken, checkRole('admin'), async (req, res) => {
+router.post('/mod/:id/approve', checkRole('admin'), async (req, res) => {
   const r = await Recipes.findByIdAndUpdate(req.params.id, {
     $set: { status: 'approved', reviewedBy: req.user._id, reviewedAt: new Date(), rejectionReason: null }
   }, { new: true });
@@ -305,7 +304,7 @@ router.post('/mod/:id/approve', checkToken, checkRole('admin'), async (req, res)
 });
 
 // Refuser
-router.post('/mod/:id/reject', checkToken, checkRole('admin'), async (req, res) => {
+router.post('/mod/:id/reject', checkRole('admin'), async (req, res) => {
   const { reason } = req.body;
   const r = await Recipes.findByIdAndUpdate(req.params.id, {
     $set: { status: 'rejected', reviewedBy: req.user._id, reviewedAt: new Date(), rejectionReason: reason || '' }

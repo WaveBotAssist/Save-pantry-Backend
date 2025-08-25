@@ -1,10 +1,9 @@
 const express = require('express');
 const User = require('../models/users')
 var router = express.Router();
-const checkToken = require('../middlewares/checkToken');
 
 //route pour enregistrer le pushToken pour les notifications dans la base de donnée
-router.post('/update-token', checkToken, async (req, res) => {
+router.post('/update-token', async (req, res) => {
   try {
     const updated = await User.updateOne(
       { _id: req.user._id },
@@ -17,7 +16,7 @@ router.post('/update-token', checkToken, async (req, res) => {
 });
 
 // route pour mettre à jour les paramètres des notifications rappel peremption et partage listes dans bdd
-router.put('/notificationsettings', checkToken, async (req, res) => {
+router.put('/notificationsettings', async (req, res) => {
   const { expiry, share } = req.body;
 
   const update = {};
@@ -28,7 +27,6 @@ router.put('/notificationsettings', checkToken, async (req, res) => {
   if (share) {
     if (typeof share.enabled === 'boolean') update['notificationSettings.share.enabled'] = share.enabled;
   }
-console.log('update',update)
   try {
     await User.updateOne({ _id: req.user._id }, update);
     res.json({ message: 'Paramètres mis à jour' });

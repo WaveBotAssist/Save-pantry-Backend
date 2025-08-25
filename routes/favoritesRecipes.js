@@ -1,10 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/users');
-const checkToken = require('../middlewares/checkToken');
 
 // ✅ Ajouter une recette aux favoris
-router.post('/add', checkToken, async (req, res) => {
+router.post('/add', async (req, res) => {
   const { recipeId } = req.body;
   if (!recipeId) return res.status(400).json({ success: false, message: 'ID de recette manquant' });
 
@@ -19,7 +18,7 @@ router.post('/add', checkToken, async (req, res) => {
 });
 
 // ✅ Supprimer une recette des favoris
-router.delete('/remove/:recipeId', checkToken, async (req, res) => {
+router.delete('/remove/:recipeId', async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user._id, {
       $pull: { favorites: req.params.recipeId }
@@ -31,7 +30,7 @@ router.delete('/remove/:recipeId', checkToken, async (req, res) => {
 });
 
 // ✅ Obtenir la liste des recettes favorites (avec les détails)
-router.get('/list', checkToken, async (req, res) => {
+router.get('/list', async (req, res) => {
   try {
     const user = await User.findById(req.user._id).populate('favorites');
     res.json({ success: true, favorites: user.favorites });

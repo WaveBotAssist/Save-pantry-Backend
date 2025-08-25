@@ -10,7 +10,7 @@ const productSchema = mongoose.Schema({
     image: String,
     calorie: String,
     codebarre: String 
-});
+  },{timeStamps: true});
 
 const Product = mongoose.model('Product', productSchema);
 module.exports = Product;

@@ -4,7 +4,6 @@ const bcrypt = require('bcrypt');
 const checkToken = require('../middlewares/checkToken');
 const User = require('../models/users')
 const { check, validationResult } = require('express-validator');
-const { createSessionForUser } = require('../utils/session');
 const rateLimit = require('express-rate-limit');
 const cron = require('node-cron');
 const nodemailer = require('nodemailer')
@@ -62,11 +61,11 @@ router.post(
         password: hash,
         tokenpush: req.body.tokenpush
       });
-      const rawToken = await createSessionForUser(newUser); // crée tokenHash+fingerprint+expires
+      
       // Sauvegarde de l'utilisateur dans la base de données
       await newUser.save();
 
-      res.json({ result: true, token: rawToken, username: newUser.username });
+      res.json({ result: true, username: newUser.username });
     } catch (err) {
       if (err.code === 11000) {
         // Doublon détecté par MongoDB
@@ -79,48 +78,6 @@ router.post(
     }
   }
 );
-
-//création de la route pour ce connecter
-router.post("/signin", loginLimiter, async (req, res) => {
-  try {
-    const { email, password, tokenpush } = req.body;
-
-    // Vérifie si l'utilisateur existe
-    const user = await User.findOne({ email });
-
-    if (!user) {
-      return res.status(400).json({ result: false, error: "User not found" });
-    }
-
-    // Vérifie le mot de passe
-    const ok = await bcrypt.compare(password, user.password);
-    if (!ok) return res.status(400).json({ result: false, error: "Wrong password" });
-
-    // Vérifie si le tokenpush a changé, et le met à jour si nécessaire
-    if (tokenpush && user.tokenpush !== tokenpush) {
-      user.tokenpush = tokenpush;
-      await user.save();
-      console.log("Push token mis à jour !");
-    }
-
-    // 🔄 rotation de session
-    const rawToken = await createSessionForUser(user); // maj tokenHash/fingerprint/expire
-
-    // Réponse unique
-    res.json({
-      result: true,
-      username: user.username,
-      token: rawToken,
-      email: user.email,
-      myproducts: user.myproducts,
-      role: user.role,
-    });
-
-  } catch (err) {
-    res.status(500).json({ result: false, error: err.message });
-  }
-});
-
 
 
 
@@ -177,7 +134,7 @@ router.put('/updateLanguage', checkToken, async (req, res) => {
 });
 
 
-//cron
+//cron pour mettre a jour les prix des produits
 cron.schedule("0 0 * * *", async () => {
   console.log("🔄 Mise à jour des prix en cours...");
 

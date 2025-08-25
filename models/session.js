@@ -1,0 +1,17 @@
+const mongoose = require('mongoose');
+const sessionSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'users', index: true, required: true },
+  tokenHash: { type: String, required: true },
+  tokenFingerprint: { type: String, index: true, required: true },
+  expiresAt: { type: Date, index: true, required: true },
+  device: { type: String, default: 'mobile' },
+  createdAt: { type: Date, default: Date.now },
+  revokedAt: Date,
+});
+//Cet index accélère les requêtes où Mongo doit chercher toutes les sessions d’un utilisateur, souvent triées ou filtrées par date d’expiration.
+sessionSchema.index({ userId: 1, expiresAt: 1 });
+//garder 15 jours les sessions après révocation
+sessionSchema.index({ revokedAt: 1 }, { expireAfterSeconds: 15 * 24 * 60 * 60 });
+
+const Session = mongoose.model('sessions', sessionSchema);
+module.exports = Session;

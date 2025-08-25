@@ -2,13 +2,12 @@ const express = require('express');
 var router = express.Router()
 const ShoppingList = require('../models/shoppinglists')
 const User = require('../models/users')
-const checkToken = require('../middlewares/checkToken');
 const { Expo } = require('expo-server-sdk');
 const expo = new Expo();
 const i18next = require('i18next'); 
 
 // route pour créé liste de course et la partager
-router.post('/create-and-share', checkToken, async (req, res) => {
+router.post('/create-and-share', async (req, res) => {
   try {
     const { title, items, sharedUsers, canEdit } = req.body;
     const owner = await User.findById(req.user._id);
@@ -139,7 +138,7 @@ router.post('/create-and-share', checkToken, async (req, res) => {
 
 
 // route pour affichage de la liste de course partagée
-router.get('/getList', checkToken, async (req, res) => {
+router.get('/getList', async (req, res) => {
   try {
     const ownerId = req.user._id;
 
@@ -174,7 +173,7 @@ router.get('/getList', checkToken, async (req, res) => {
 
 
 // Modifier le "checked" d’un item dans une liste
-router.post('/toggleItem', checkToken, async (req, res) => {
+router.post('/toggleItem', async (req, res) => {
   const { listId, itemId, checked } = req.body;
 
   try {
@@ -203,7 +202,7 @@ router.post('/toggleItem', checkToken, async (req, res) => {
 
 
 // route pour effacer une seule liste de course par son id
-router.delete('/deleteList', checkToken, async (req, res) => {
+router.delete('/deleteList', async (req, res) => {
   const { listId } = req.body;
   const ownerId = req.user._id;
 
@@ -231,7 +230,7 @@ router.delete('/deleteList', checkToken, async (req, res) => {
 });
 
 // route pour effacer toutes les listes de course qui on été partagée
-router.delete('/deleteAllLists', checkToken, async (req, res) => {
+router.delete('/deleteAllLists', async (req, res) => {
   const { lists } = req.body; // attend un tableau de listes à supprimer
   const ownerId = req.user._id;
 

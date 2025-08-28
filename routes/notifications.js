@@ -9,7 +9,8 @@ router.post('/update-token', async (req, res) => {
       { _id: req.user._id },
       { tokenpush: req.body.tokenpush }
     );
-    res.json({ result: true, updated });
+    
+    res.json({ result: true, updated }); 
   } catch (e) {
     res.status(500).json({ result: false, error: e.message });
   }

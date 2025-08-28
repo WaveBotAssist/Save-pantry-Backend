@@ -30,7 +30,6 @@ require('./modules/cronNotification')
 var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');
 var productRouter = require('./routes/product');
-var forgotRouter = require('./routes/forgot');
 var notifications = require('./routes/notifications');
 var shoppinglistsRouter = require('./routes/shoppinglists');
 var recipeRouter= require('./routes/recipe');
@@ -52,7 +51,7 @@ app.use(middleware.handle(i18next));
 // 🌐 Public
 app.use('/', indexRouter);
 app.use('/auth', auth);          // /auth/signup & /auth/signin doivent rester publics
-app.use('/forgot', forgotRouter); // public
+
 
 // 👤 /users est "mixte" (expose des routes privées qui font elles-mêmes checkToken à l’intérieur)
 app.use('/users', usersRouter);

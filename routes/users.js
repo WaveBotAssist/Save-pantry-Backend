@@ -4,81 +4,9 @@ const bcrypt = require('bcrypt');
 const checkToken = require('../middlewares/checkToken');
 const User = require('../models/users')
 const { check, validationResult } = require('express-validator');
-const rateLimit = require('express-rate-limit');
 const cron = require('node-cron');
-const nodemailer = require('nodemailer')
+
 const updateProductPrice = require('../modules/updateProductPrice')
-
-//limiter les tentatives de connexion avec rateLimit
-const loginLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 10 minutes
-  max: 10, // Limite à 10 tentatives
-  message: 'Trop de tentatives de connexion. Réessayez plus tard.',
-});
-
-
-/* Création de la route pour Signup */
-router.post(
-  '/signup',
-  [
-    // Middleware de validation des entrées utilisateur
-    check('email')
-      .isEmail().withMessage('Email invalide'),
-    check('password')
-      .isLength({ min: 8 }).withMessage('Le mot de passe doit contenir au moins 8 caractères')
-      .matches(/[A-Z]/).withMessage('Le mot de passe doit contenir au moins une lettre majuscule')
-      .matches(/[a-z]/).withMessage('Le mot de passe doit contenir au moins une lettre minuscule')
-      .matches(/\d/).withMessage('Le mot de passe doit contenir au moins un chiffre')
-      .matches(/[\W_]/).withMessage('Le mot de passe doit contenir au moins un caractère spécial'),
-  ],
-  async (req, res) => {
-    // Vérification des erreurs de validation
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ result: false, errors: errors.array() });
-    }
-
-    try {
-      // Vérifie si username existe déjà dans la base de données
-      const existingUser = await User.findOne({ username: req.body.username })
-      if (existingUser) {
-        return res.status(400).json({ result: false, message: 'UserName already exists' });
-      }
-      // Vérifie si l'email existe déjà dans la base de données
-      const existingMail = await User.findOne({ email: req.body.email });
-
-      if (existingMail) {
-        return res.status(400).json({ result: false, message: 'Email already exists' });
-      }
-
-      // Création du hash du mot de passe
-      const hash = bcrypt.hashSync(req.body.password, 10);
-
-      // Création d'un nouvel utilisateur
-      const newUser = new User({
-        username: req.body.username,
-        email: req.body.email,
-        password: hash,
-        tokenpush: req.body.tokenpush
-      });
-      
-      // Sauvegarde de l'utilisateur dans la base de données
-      await newUser.save();
-
-      res.json({ result: true, username: newUser.username });
-    } catch (err) {
-      if (err.code === 11000) {
-        // Doublon détecté par MongoDB
-        return res.status(400).json({
-          result: false,
-          message: 'Nom d’utilisateur ou email déjà utilisé',
-        });
-      }
-      res.status(500).json({ result: false, error: err.message });
-    }
-  }
-);
-
 
 
 //  route pour préremplir le formulaire de l user avec ses préférences actuelles

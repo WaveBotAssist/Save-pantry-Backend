@@ -20,6 +20,7 @@ const myproductsSchema = mongoose.Schema({
 const userSchema = mongoose.Schema({
     username: { type: String, required: true, unique: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },// ajout de lowercase et trim a true pour forcer l email en minuscule en bdd
+    emailVerified: { type: Boolean, default: false }, // status de vérification
     password: String,
     notificationsEnabled: Boolean,
     tokenpush: String,
@@ -46,6 +47,7 @@ const userSchema = mongoose.Schema({
     favorites: [{ type: mongoose.Schema.Types.ObjectId, ref: 'recipes' }]
     
 }, { timestamps: true }) // 👈 ajoute createdAt et updatedAt automatiquement
+
 
 const User = mongoose.model('users', userSchema);
 

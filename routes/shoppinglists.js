@@ -4,7 +4,7 @@ const ShoppingList = require('../models/shoppinglists')
 const User = require('../models/users')
 const { Expo } = require('expo-server-sdk');
 const expo = new Expo();
-const i18next = require('i18next'); 
+const i18next = require('i18next');
 
 // route pour créé liste de course et la partager
 router.post('/create-and-share', async (req, res) => {
@@ -142,12 +142,9 @@ router.get('/getList', async (req, res) => {
   try {
     const ownerId = req.user._id;
 
-    const lists = await ShoppingList.find({
-      $or: [
-        { owner: ownerId },
-        { "sharedWith.userId": ownerId }
-      ]
-    }).sort({ createdAt: -1 }); // Tri par date récente
+    const lists = await ShoppingList.find(
+      { "sharedWith.userId": ownerId }
+    ).sort({ createdAt: -1 }); // Tri par date récente
 
     // Vérifier s'il y a de nouvelles listes non lues
     const newLists = lists.filter(list =>
@@ -177,7 +174,7 @@ router.post('/toggleItem', async (req, res) => {
   const { listId, itemId, checked } = req.body;
 
   try {
-    const ownerId = req.user._id;y
+    const ownerId = req.user._id;
     const list = await ShoppingList.findOne({
       _id: listId,
       $or: [

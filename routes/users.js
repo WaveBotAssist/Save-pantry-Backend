@@ -1,9 +1,7 @@
 var express = require('express');
 var router = express.Router();
-const bcrypt = require('bcrypt');
 const checkToken = require('../middlewares/checkToken');
 const User = require('../models/users')
-const { check, validationResult } = require('express-validator');
 const cron = require('node-cron');
 
 const updateProductPrice = require('../modules/updateProductPrice')

@@ -11,6 +11,7 @@ const myproductsSchema = mongoose.Schema({
     emplacement: String,
     quantite: Number,
     prix: String,
+    currency: String,
     unit: String,
     calorie: String,
     updatedAt: { type: Date, default: Date.now } // Date de la dernière mise à jour

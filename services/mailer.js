@@ -10,7 +10,7 @@ async function sendEmailOtp({ toEmail, toName = '', code }) {
 <p>Here is your verification code:</p>
 <p style="font-size:22px;"><b>${code}</b></p>
 <p>Valid for 10 minutes. Do not share it.</p>
-<p>👉 If you closed the app, you can go back to the signup screen and tap <b>"Already have a code?"</b> to enter it directly.</p>
+<p> If you closed the app, you can go back to the signup screen and tap <b>"Already have a code?"</b> to enter it directly.</p>
 <p>— The SavePantry Team</p>
   `;
   const text = `Verification code: ${code}\nValid for 10 minutes.\n— SavePantry`;

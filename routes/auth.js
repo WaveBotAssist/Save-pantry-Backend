@@ -13,7 +13,7 @@ const Session = require('../models/session');
 const checkToken = require('../middlewares/checkToken');
 
 // Antispam: 3 requêtes / 15 min par IP
-const forgotLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 3 });
+const forgotLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5 });
 const requestLimiter = rateLimit({ windowMs: 60_000, max: 5 }); // basique
 const loginLimiter = rateLimit({ windowMs: 60 * 1000, max: 10 });
 
@@ -116,7 +116,7 @@ router.post(
 );
 
 
-
+// route pour ce connecter dans l app
 router.post('/signin', loginLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   const user = await User.findOne({ email }).select('+password');
@@ -134,7 +134,7 @@ router.post('/signin', loginLimiter, async (req, res) => {
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     device: req.headers['user-agent'] || 'mobile'
   });
-  res.json({ result: true, token: raw, username: user.username, role: user.role, email: user.email, myproducts: user.myproducts, });
+  res.json({ result: true, token: raw, username: user.username, role: user.role, email: user.email, myproducts: user.myproducts });
 });
 
 router.post('/logout', checkToken, async (req, res) => {
@@ -169,7 +169,7 @@ router.post('/forgot-password', forgotLimiter, async (req, res) => {
     const rawToken = crypto.randomBytes(32).toString('hex');
     const selector = crypto.randomBytes(9).toString('hex'); // ~72 bits
     const tokenHash = await bcrypt.hash(rawToken, 10);
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 min
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // valable 30 min
     await PasswordReset.create({ userId: user._id, selector, tokenHash, expiresAt });
 
     // URL vers ton front (web ou universal link)
@@ -277,7 +277,7 @@ router.post('/email/verify/request-otp', requestLimiter, async (req, res) => {
     emailLower,
     purpose: 'verify_email',
     codeHash: await hash(code),
-    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000), //valable 10 min
     attempts: 0,
     lastSentAt: now,
     sentCountDay: last ? Math.min((last.sentCountDay || 0) + 1, 99) : 1,

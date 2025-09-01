@@ -9,7 +9,7 @@ const i18next = require('i18next');
 router.post('/addproduct', async (req, res) => {
   try {
     const userId = req.user._id; // Récupérer l'ID de l'utilisateur à partir du token
-    const { codebarre, name, categorie, prix, unit, image, expiration, emplacement, quantite, calorie, magasin } = req.body;
+    const { codebarre, name, categorie, prix, currency, unit, image, expiration, emplacement, quantite, calorie, magasin } = req.body;
     if (!name || name.trim() === '') {
       return res.status(400).json({
         result: false,
@@ -44,6 +44,7 @@ router.post('/addproduct', async (req, res) => {
         emplacement,
         quantite,
         prix,
+        currency,
         calorie,
         unit,
       });
@@ -66,6 +67,7 @@ router.post('/addproduct', async (req, res) => {
         magasin,
         categorie,
         prix,
+        currency,
         unit,
         codebarre,
         image,
@@ -94,6 +96,7 @@ router.post('/addproduct', async (req, res) => {
       emplacement,
       quantite,
       prix,
+      currency,
       unit,
       calorie,
     });
@@ -243,7 +246,7 @@ router.post('/inventory/consume', async (req, res) => {
       if ((sub.quantite ?? 0) < it.qty) {
         return res.status(409).json({
           result: false,
-          error: 'inventory.insufficientStock'
+          error: 'insufficientStock'
         })
       }
     }

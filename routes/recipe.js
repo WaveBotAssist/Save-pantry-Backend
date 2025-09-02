@@ -22,6 +22,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 //ci-dessous les deux routes pour upload ou remove une image de R2 cloudflare
 // ---- UPLOAD ROUTE ----
 router.post('/r2/upload', upload.single('file'), async (req, res) => {
+  console.log(req.file.originalname)
   try {
     const key = `images/${Date.now()}_${req.file.originalname}`;
     const command = new PutObjectCommand({

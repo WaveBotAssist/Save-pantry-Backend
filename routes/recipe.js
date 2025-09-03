@@ -5,6 +5,8 @@ const User = require('../models/users');
 const Recipes = require('../models/recipe');
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const multer = require('multer');
+//sharp pour optimizer la taille des images
+const sharp = require("sharp");
 
 // Setup S3 client (compatible R2)
 const s3 = new S3Client({
@@ -22,22 +24,40 @@ const upload = multer({ storage: multer.memoryStorage() });
 //ci-dessous les deux routes pour upload ou remove une image de R2 cloudflare
 // ---- UPLOAD ROUTE ----
 router.post('/r2/upload', upload.single('file'), async (req, res) => {
-  console.log(req.file.originalname)
   try {
-    const key = `images/${Date.now()}_${req.file.originalname}`;
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: "Aucun fichier envoyé" });
+    }
+
+    // 🔹 1. Créer un nom unique
+    const key = `images/${Date.now()}_${req.file.originalname.replace(/\s+/g, "_")}`;
+
+    // 🔹 2. Optimiser avec Sharp (JPEG réduit)
+    const optimizedImage = await sharp(req.file.buffer)
+      .rotate()              // ✅ corrige l'orientation selon EXIF
+      .resize({ width: 800 })      // redimensionner max 800px
+      .jpeg({ quality: 75 })       // compresser
+      .toBuffer();
+
+    // 🔹 3. Envoyer dans Cloudflare R2
     const command = new PutObjectCommand({
       Bucket: process.env.R2_BUCKET,
       Key: key,
-      Body: req.file.buffer,
-      ContentType: req.file.mimetype,
+      Body: optimizedImage,
+      ContentType: "image/jpeg", // forcer le bon type
     });
     await s3.send(command);
+
+    // 🔹 4. Générer l’URL publique
     const imageUrl = `${process.env.R2_PUBLIC_BASE}/${key}`;
+
     res.json({ success: true, url: imageUrl, key });
   } catch (err) {
+    console.error("Erreur upload R2:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 // ---- DELETE ROUTE ----
 router.delete('/r2/delete/:key', async (req, res) => {
@@ -282,7 +302,7 @@ router.get('/recipesList', async (req, res) => {
 })
 
 
-// Lister les pending
+// Lister les recettes qui sont en attentes de validation ('pending' en dataBase)
 router.get('/mod/pending', checkRole('admin'), async (req, res) => {
   const { page = 1, limit = 30 } = req.query;
   const skip = (page - 1) * limit;
@@ -314,6 +334,20 @@ router.post('/mod/:id/reject', checkRole('admin'), async (req, res) => {
   res.json({ result: true, recipe: r });
 });
 
+//route pour supprimer une recette selectionnée par son _id
+router.delete('/delete/:idRecipe', checkRole('admin'), async (req, res) => {
+  try {
+    const recipe = await Recipes.findByIdAndDelete(req.params.idRecipe);
+
+    if (!recipe) {
+      return res.status(404).json({ result: false, message: 'Recipe not found' });
+    }
+
+    res.json({ result: true, message: 'Recipe deleted' });
+  } catch (error) {
+    res.status(500).json({ result: false, error: error.message });
+  }
+});
 
 
 module.exports = router

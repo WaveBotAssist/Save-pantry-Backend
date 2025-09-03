@@ -137,6 +137,8 @@ router.post('/signin', loginLimiter, async (req, res) => {
   res.json({ result: true, token: raw, username: user.username, role: user.role, email: user.email, myproducts: user.myproducts });
 });
 
+
+
 router.post('/logout', checkToken, async (req, res) => {
   const SessionModel = require('../models/session');
   await SessionModel.findByIdAndUpdate(req.sessionId, { $set: { revokedAt: new Date() } });

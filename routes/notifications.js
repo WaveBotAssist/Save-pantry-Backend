@@ -22,12 +22,22 @@ router.put('/notificationsettings', async (req, res) => {
 
   const update = {};
   if (expiry) {
-    if (typeof expiry.enabled === 'boolean') update['notificationSettings.expiry.enabled'] = expiry.enabled;
-    if (typeof expiry.hour === 'number') update['notificationSettings.expiry.hour'] = expiry.hour;
+    if (typeof expiry.enabled === 'boolean') {
+      update['notificationSettings.expiry.enabled'] = expiry.enabled;
+    }
+    if (typeof expiry.hour === 'number') {
+      update['notificationSettings.expiry.hour'] = expiry.hour;
+    }
+    if (typeof expiry.timezone === 'string') {
+      update['notificationSettings.expiry.timezone'] = expiry.timezone;
+    }
   }
   if (share) {
-    if (typeof share.enabled === 'boolean') update['notificationSettings.share.enabled'] = share.enabled;
+    if (typeof share.enabled === 'boolean') {
+      update['notificationSettings.share.enabled'] = share.enabled;
+    }
   }
+
   try {
     await User.updateOne({ _id: req.user._id }, update);
     res.json({ message: 'Paramètres mis à jour' });

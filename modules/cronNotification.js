@@ -6,7 +6,7 @@ const expo = new Expo();
 const i18next = require('i18next');
 
 // Planifier la tâche tous les jours à 9h du matin
-cron.schedule('0 * * * *', async () => {
+cron.schedule('* * * * *', async () => {
     console.log("📅 Vérification des dates de peremption de chaques utilisateurs et envoi des notifications...");
 
     // ici on verifie si l utilisateur a activé ou pas les notifications de peremption

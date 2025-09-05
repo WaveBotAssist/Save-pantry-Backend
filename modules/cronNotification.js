@@ -7,7 +7,7 @@ const i18next = require('i18next');
 const moment = require('moment-timezone');
 
 // Planifier la tâche tous les jours à 9h du matin
-cron.schedule('* * * * *', async () => {
+cron.schedule('0 * * * *', async () => {
   console.log("📅 Vérification des dates de peremption de chaques utilisateurs et envoi des notifications...");
 
 

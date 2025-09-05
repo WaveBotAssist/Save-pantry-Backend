@@ -39,7 +39,7 @@ const userSchema = mongoose.Schema({
         expiry: {
             enabled: { type: Boolean, default: true },
             hour: { type: Number, default: 9 },
-            timezone: { type: String, default: 'Europe/Brussels' } 
+            timezone: { type: String, default: 'Europe/Brussels' } // ajouté pour l heure locale de l utilisateur
         },
         share: {
             enabled: { type: Boolean, default: true },

@@ -1,7 +1,12 @@
 {
     "receptionlist": "Vous avez reçu une nouvelle liste de",
-    "youhave": "Vous avez",
-    "expire3days": "produit(s) qui expirent dans 3 jours.",
-    "expiretodays": "produit(s) qui expirent aujourd'hui.",
-    "expired": "produit(s) dont la date est déjà dépassée."
+    "expired_names": "❌ Trop tard : {{names}} périmé(s).",
+    "expired_many": "❌ Trop tard : {{count}} produits périmés.",
+    "today_names": "⚠️ Attention : {{names}} expire(nt) aujourd’hui.",
+    "today_many": "⚠️ Attention : {{count}} produits expirent aujourd’hui.",
+    "soon_names": "🕑 Petit rappel : {{names}} expire(nt) dans 3 jours.",
+    "soon_many": "🕑 Petit rappel : {{count}} produits expirent dans 3 jours.",
+    "Headsup": "Alerte stock",
+    "expired_reminder": "⚠️ Vous avez encore {{count}} produits périmés dans votre stock.",
+    "insufficientStock": "Pas assez en stock pour les quantités ajoutées"
 }

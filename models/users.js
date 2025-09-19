@@ -8,6 +8,7 @@ const myproductsSchema = mongoose.Schema({
     magasin: String,
     categorie: String,
     expiration: Date,
+    notifiedExpired: { type: Boolean, default: false },// ajouter pour marquer comme expired
     emplacement: String,
     quantite: Number,
     prix: String,
@@ -22,7 +23,7 @@ const userSchema = mongoose.Schema({
     username: { type: String, required: true, unique: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },// ajout de lowercase et trim a true pour forcer l email en minuscule en bdd
     emailVerified: { type: Boolean, default: false }, // status de vérification
-    password: String,
+    password: { type: String, required: true, select: false },
     notificationsEnabled: Boolean,
     tokenpush: String,
     //ajout du choix de la langue de l utilisateur

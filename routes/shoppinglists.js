@@ -8,6 +8,8 @@ const i18next = require('i18next');
 
 // route pour créé liste de course et la partager
 router.post('/create-and-share', async (req, res) => {
+  const authHeader = req.headers["authorization"];
+  console.log(authHeader)
   try {
     const { title, items, sharedUsers, canEdit } = req.body;
     const owner = await User.findById(req.user._id);

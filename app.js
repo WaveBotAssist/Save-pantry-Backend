@@ -35,6 +35,7 @@ var shoppinglistsRouter = require('./routes/shoppinglists');
 var recipeRouter= require('./routes/recipe');
 const favoritesRouter = require('./routes/favoritesRecipes');
 const auth = require('./routes/auth');
+const planning = require('./routes/planning')
 
 var app = express();
 //important ajout du module cors pour communication frontend a backend
@@ -62,5 +63,6 @@ app.use('/notifications', checkToken, slideSession, notifications);
 app.use('/shoppinglists', checkToken, slideSession, shoppinglistsRouter);
 app.use('/recipe',        checkToken, slideSession, recipeRouter);
 app.use('/favorites',     checkToken, slideSession, favoritesRouter);
+app.use('/planning', checkToken, slideSession, planning );
 
 module.exports = app;

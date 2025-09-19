@@ -1,7 +1,13 @@
 {
     "receptionlist": "You have received a new list of",
     "youhave": "You have",
-    "expire3days": "product(s) that expire in 3 days.",
-    "expiretodays": "product(s) that expire today.",
-    "expired": "product(s) whose date has already expired."
+    "expired_names": "❌ Too late: {{names}} expired.",
+    "expired_many": "❌ Too late: {{count}} items expired.",
+    "today_names": "⚠️ Heads up: {{names}} expire(s) today.",
+    "today_many": "⚠️ Heads up: {{count}} items expire today.",
+    "soon_names": "🕑 Reminder: {{names}} expire(s) in 3 days.",
+    "soon_many": "🕑 Reminder: {{count}} items expire in 3 days.",
+    "Headsup": "Stock Alert",
+    "expired_reminder": "⚠️ You still have {{count}} expired items in your stock.",
+    "insufficientStock": "Not enough stock for the added quantities"
 }

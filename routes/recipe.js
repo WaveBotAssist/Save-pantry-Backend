@@ -226,7 +226,7 @@ router.post('/myrecipes', async (req, res) => {
     const pages = Math.ceil(total / limit);
     const sliceEnd = limit === 0 ? undefined : skip + limit;
     const paginated = recettesCompatibles.slice(skip, sliceEnd);
-
+  
     return res.json({
       result: true,
       page,

@@ -2,8 +2,31 @@ var express = require('express');
 var router = express.Router();
 const Product = require('../models/product');
 const User = require('../models/users');
-// Chargement de i18next pour la gestion des traductions
-const i18next = require('i18next');
+const fetch = require('node-fetch');
+
+
+// route pour récupérer les informations d'un produit via son code-barres depuis l'API OpenFoodFacts
+router.get('/openfoodfacts/:codebarre', async (req, res) => {
+  try {
+    const { codebarre } = req.params;
+    const fet = await fetch(`https://world.openfoodfacts.org/api/v2/product/${codebarre}?fields=product_name,nutriscore_data,image_url,categories,quantity,nutriments,ecoscore_grade`)
+    const productData = await fet.json();
+
+    // Vérifie que l'API renvoie bien un produit
+    if (!productData || !productData.product) {
+      return res.status(404).json({
+        result: false,
+        error: "Produit non trouvé dans OpenFoodFacts"
+      });
+    }
+
+    res.json({ result: true, product : productData });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ result: false, error: e.message });
+  }
+})
+
 
 // Route pour ajouter un nouveau produit dans la collection products ou myproducts.
 router.post('/addproduct', async (req, res) => {
@@ -121,30 +144,38 @@ router.post('/addproduct', async (req, res) => {
 // Route pour mettre à jour les données dans le sous-document myproducts
 
 router.put('/myproducts/:productId', async (req, res) => {
-  const userId = req.user._id; // Récupérer l'ID de l'utilisateur à partir du token grace a checkToken middleware
-  const { productId } = req.params; // L'identifiant du produit
-  const { codebarre, prix, ...otherUpdates } = req.body;
+  const userId = req.user._id;
+  const { productId } = req.params;
+  const { codebarre, prix, expiration, ...otherUpdates } = req.body;
+
   if (!userId) {
     return res.status(401).json({ result: false, error: "Token manquant" });
   }
 
   try {
-    // Mettre à jour le produit dans le sous-document `myproducts`
+    // Construire les updates
+    const updates = {
+      "myproducts.$.codebarre": codebarre,
+      "myproducts.$.prix": prix,
+      "myproducts.$.updatedAt": new Date(),
+      ...Object.keys(otherUpdates).reduce((acc, key) => {
+        acc[`myproducts.$.${key}`] = otherUpdates[key];
+        return acc;
+      }, {})
+    };
+
+    // Si l'expiration est modifiée -> reset notifiedExpired
+    if (expiration !== undefined) {
+      updates["myproducts.$.expiration"] = expiration;
+      updates["myproducts.$.notifiedExpired"] = false;
+    }
+
     const updatedUser = await User.findOneAndUpdate(
-      { _id: userId, "myproducts._id": productId }, // Recherche l'utilisateur et l'id du sous-document
-      {
-        $set: {
-          "myproducts.$.codebarre": codebarre,
-          "myproducts.$.prix": prix,
-          "myproducts.$.updatedAt": new Date(), // Mettre à jour la date
-          ...Object.keys(otherUpdates).reduce((acc, key) => {
-            acc[`myproducts.$.${key}`] = otherUpdates[key];
-            return acc;
-          }, {})
-        }
-      },
-      { new: true } // Retourne le document mis à jour
+      { _id: userId, "myproducts._id": productId },
+      { $set: updates },
+      { new: true }
     );
+
     if (!updatedUser) {
       return res.status(404).json({ result: false, error: "Produit ou utilisateur introuvable" });
     }
@@ -155,6 +186,7 @@ router.put('/myproducts/:productId', async (req, res) => {
     res.status(500).json({ result: false, error: err.message });
   }
 });
+
 
 
 // Route pour supprimer un produit dans le sous-document myproducts d'un utilisateur.
@@ -188,12 +220,28 @@ router.delete('/deleteProduct/:productId', async (req, res) => {
 });
 
 
-// afficher tout les produits
-router.get('/getproducts', (req, res) => {
-  Product.find().then(dataProduct => {
-    res.json({ result: true, ListProducts: dataProduct })
-  })
-})
+// afficher tous les produits (utilisée dans stockScreen pour mise a jour)
+router.get('/getproducts', async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    if (!userId) {
+      return res.status(401).json({ result: false, message: "Non autorisé" });
+    }
+
+    const user = await User.findById(userId).select('myproducts');
+
+    if (!user) {
+      return res.status(404).json({ result: false, message: "Utilisateur non trouvé" });
+    }
+
+    return res.json({ result: true, ListProducts: user.myproducts });
+  } catch (error) {
+    console.error("❌ Erreur getproducts:", error);
+    return res.status(500).json({ result: false, message: "Erreur serveur" });
+  }
+});
+
 
 //recherche d'un produit par nom
 router.get('/getproducts/:name', (req, res) => {
@@ -217,96 +265,7 @@ router.get('/getproducts/code/:codebarre', (req, res) => {
     });
 })
 
-// Déduire des quantités planifiées du stock de l'utilisateur
-// Body attendu: { items: [{ productId: "<_id du myproduct>", qty: 2 }, ...] }
-router.post('/inventory/consume', async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { items } = req.body;
 
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ result: false, error: 'items doit être un tableau non vide' });
-    }
-
-    const user = await User.findById(userId).select('myproducts');
-    if (!user) return res.status(404).json({ result: false, error: 'Utilisateur introuvable' });
-
-    // index des sous-documents par _id (string)
-    const byId = new Map(user.myproducts.map(p => [String(p._id), p]));
-
-    // validations
-    for (const it of items) {
-      if (!it?.productId || typeof it.qty !== 'number' || it.qty <= 0) {
-        return res.status(400).json({ result: false, error: 'Chaque item doit avoir productId et qty>0' });
-      }
-      const sub = byId.get(String(it.productId));
-      if (!sub) {
-        return res.status(404).json({ result: false, error: `Produit introuvable dans le stock` });
-      }
-      if ((sub.quantite ?? 0) < it.qty) {
-        return res.status(409).json({
-          result: false,
-          error: 'insufficientStock'
-        })
-      }
-    }
-
-    // déduction
-    for (const it of items) {
-      const sub = byId.get(String(it.productId));
-      sub.quantite = Math.max(0, (sub.quantite ?? 0) - it.qty);
-      // si tu veux, gère aussi un champ "reserved" ici (ex: sub.reserved = Math.max(0, sub.reserved - it.qty))
-    }
-
-    await user.save();
-    return res.json({ result: true, message: 'Stock mis à jour (consommation).' });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ result: false, error: 'Erreur interne.' });
-  }
-});
-
-
-// Annuler la déduction (récréditer les quantités)
-// Body attendu: { items: [{ productId: "<_id du myproduct>", qty: 2 }, ...] }
-router.post('/inventory/undo', async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { items } = req.body;
-
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ result: false, error: 'items doit être un tableau non vide' });
-    }
-
-    const user = await User.findById(userId).select('myproducts');
-    if (!user) return res.status(404).json({ result: false, error: 'Utilisateur introuvable' });
-
-    const byId = new Map(user.myproducts.map(p => [String(p._id), p]));
-
-    // validations
-    for (const it of items) {
-      if (!it?.productId || typeof it.qty !== 'number' || it.qty <= 0) {
-        return res.status(400).json({ result: false, error: 'Chaque item doit avoir productId et qty>0' });
-      }
-      const sub = byId.get(String(it.productId));
-      if (!sub) {
-        return res.status(404).json({ result: false, error: `Produit introuvable dans le stock` });
-      }
-    }
-
-    // récrédit
-    for (const it of items) {
-      const sub = byId.get(String(it.productId));
-      sub.quantite = (sub.quantite ?? 0) + it.qty;
-    }
-
-    await user.save();
-    return res.json({ result: true, message: 'Stock rétabli (annulation).' });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ result: false, error: 'Erreur interne.' });
-  }
-});
 
 
 module.exports = router;

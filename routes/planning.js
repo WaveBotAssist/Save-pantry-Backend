@@ -103,7 +103,7 @@ router.post('/inventory/consume', async (req, res) => {
     console.log(day.consumed)
 
      // Mise à jour
-    day.consumed = consumed;
+    day.consumed = true;
     await planning.save();
     await user.save();
     return res.json({ result: true, message: 'Stock mis à jour (consommation).' });
@@ -166,7 +166,7 @@ router.post('/inventory/undo', async (req, res) => {
 
 
      // Mise à jour
-    day.consumed = consumed;
+    day.consumed = false;
     await planning.save();
     await user.save();
     return res.json({ result: true, message: 'Stock rétabli (annulation).' });

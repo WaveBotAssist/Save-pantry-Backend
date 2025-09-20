@@ -15,9 +15,6 @@ const weekSchema = new mongoose.Schema({
 const planningSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   weeks: [weekSchema]
-}, 
-{ timestamps: true, 
-  optimisticConcurrency: false   // 🚀 désactive la vérif de version __v
-});
+}, { timestamps: true });
 
 module.exports = mongoose.model("Planning", planningSchema);

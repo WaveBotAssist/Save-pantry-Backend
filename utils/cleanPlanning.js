@@ -4,15 +4,16 @@
 function cleanPlanning(planning, maxAgeDays = 60) {
   const now = new Date();
 
-  planning.weeks = planning.weeks.filter(week => {
+  // Filtrer les semaines valides
+  const filteredWeeks = planning.weeks.filter(week => {
     const weekDate = new Date(week.weekStart);
     const ageDays = (now - weekDate) / (1000 * 60 * 60 * 24);
 
     // 1️⃣ Supprimer si trop vieux
     if (ageDays > maxAgeDays) return false;
 
-    // 2️⃣ Supprimer si days est vide
-    if (!week.days || week.days.size === 0 || Object.keys(week.days).length === 0) {
+    // 2️⃣ Supprimer si days est absent ou vide
+    if (!week.days || week.days.size === 0) {
       return false;
     }
 
@@ -24,6 +25,9 @@ function cleanPlanning(planning, maxAgeDays = 60) {
 
     return hasContent;
   });
+
+  // Remplacer le contenu du tableau sans changer sa référence
+  planning.weeks.splice(0, planning.weeks.length, ...filteredWeeks);
 
   return planning;
 }

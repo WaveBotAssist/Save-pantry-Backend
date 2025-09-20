@@ -25,7 +25,7 @@ module.exports = async function checkToken(req, res, next) {
 
     req.user = user;
     req.sessionId = session._id;
-    next();
+    next();// passer le contrôle à la fonction middleware suivante
   } catch {
     res.status(401).json({ error: 'Auth error' });
   }

@@ -5,6 +5,10 @@ const User = require('../models/users');
 const Planning = require('../models/planning');
 // Chargement de i18next pour la gestion des traductions
 const i18next = require('i18next');
+//import de la function pour purger le planning d un utilisateur apres un certain temps
+const { cleanPlanning } = require('../utils/cleanPlanning');
+
+
 
 // Récupérer le planning de l’utilisateur
 router.get('/', async (req, res) => {
@@ -16,16 +20,23 @@ router.get('/', async (req, res) => {
   }
 });
 
+
+
 // Sauvegarder / mettre à jour le planning
 router.post('/', async (req, res) => {
   try {
     const { weeks } = req.body;
-    const planning = await Planning.findOneAndUpdate(
-      { userId: req.user._id },
-      { weeks },
-      { upsert: true, new: true }//upsert: true "Update or Insert" = si tu ne trouves pas de document, crée-le.
-      // new: true, tu demandes à recevoir le document après mise à jour/création
-    );
+    let planning = await Planning.findOne({ userId: req.user._id });
+    if (!planning) {
+      planning = new Planning({ userId: req.user._id, weeks });
+    } else {
+      planning.weeks = weeks;
+    }
+
+    // 🧹 Purge ici
+    cleanPlanning(planning, 60);
+
+    await planning.save();
     res.json({ result: true, planning });
   } catch (e) {
     res.status(500).json({ result: false, error: e.message });
@@ -60,15 +71,13 @@ router.post('/inventory/consume', async (req, res) => {
         error: "conflictStock"
       });
     }
-
-     console.log(day.consumed)
     const user = await User.findById(userId).select('myproducts');
     if (!user) return res.status(404).json({ result: false, error: 'Utilisateur introuvable' });
 
     // index des sous-documents par _id (string)
     const byId = new Map(user.myproducts.map(p => [String(p._id), p]));
 
-    // validations
+    // validationsy
     for (const it of items) {
       if (!it?.productId || typeof it.qty !== 'number' || it.qty <= 0) {
         return res.status(400).json({ result: false, error: 'Chaque item doit avoir productId et qty>0' });

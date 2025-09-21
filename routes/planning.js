@@ -9,6 +9,7 @@ const i18next = require('i18next');
 const { cleanPlanning } = require('../utils/cleanPlanning');
 
 
+
 // Récupérer le planning de l’utilisateur
 router.get('/', async (req, res) => {
   try {
@@ -45,32 +46,68 @@ router.post('/', async (req, res) => {
 
 // Déduire des quantités planifiées du stock de l'utilisateur
 // Body attendu: { items: [{ productId: "<_id du myproduct>", qty: 2 }, ...] }
-
 router.post('/inventory/consume', async (req, res) => {
   try {
     const userId = req.user._id;
-    const { items, weekStart, key } = req.body;
+    const { items, weekStart, key, consumed, lastKnown } = req.body;
 
-    // Vérif rapide
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ result: false, error: 'items doit être un tableau non vide' });
     }
 
-    // 1️⃣ Mettre à jour les quantités
-    for (const it of items) {
-      const qty = Math.abs(Number(it.qty));
-      await User.updateOne(
-        { _id: userId, "myproducts._id": it.productId },
-        { $inc: { "myproducts.$.quantite": -qty } }
-      );
-    }
-    // 2️⃣ Mettre consumed = true dans le planning
-    await Planning.updateOne(
-      { userId, "weeks.weekStart": weekStart },
-      { $set: { [`weeks.$.days.${key}.consumed`]: true } }
-    );
+    const planning = await Planning.findOne({ userId: req.user._id });
+    if (!planning) return res.status(404).json({ result: false, error: "Planning not found" });
 
+      const week = planning.weeks.find(w => w.weekStart === weekStart);
+    if (!week) return res.status(404).json({ result: false, error: "Week not found" });
+
+    const day = week.days.get(key);
+    if (!day) return res.status(404).json({ result: false, error: "Day not found" });
+    
+    // ⚠️ Vérif de conflit
+    if (day.consumed !== lastKnown) {
+      return res.status(409).json({
+        result: false,
+        error: "conflictStock"
+      });
+    }
+    const user = await User.findById(userId).select('myproducts');
+    if (!user) return res.status(404).json({ result: false, error: 'Utilisateur introuvable' });
+
+    // index des sous-documents par _id (string)
+    const byId = new Map(user.myproducts.map(p => [String(p._id), p]));
+
+    // validationsy
+    for (const it of items) {
+      if (!it?.productId || typeof it.qty !== 'number' || it.qty <= 0) {
+        return res.status(400).json({ result: false, error: 'Chaque item doit avoir productId et qty>0' });
+      }
+      const sub = byId.get(String(it.productId));
+      if (!sub) {
+        return res.status(404).json({ result: false, error: `Produit introuvable dans le stock` });
+      }
+      if ((sub.quantite ?? 0) < it.qty) {
+        return res.status(409).json({
+          result: false,
+          error: i18next.t('insufficientStock')
+        })
+      }
+    }
+
+    // déduction
+    for (const it of items) {
+      const sub = byId.get(String(it.productId));
+      sub.quantite = Math.max(0, (sub.quantite ?? 0) - it.qty);
+      // si tu veux, gère aussi un champ "reserved" ici (ex: sub.reserved = Math.max(0, sub.reserved - it.qty))
+    }
+    console.log(day.consumed)
+
+     // Mise à jour
+    day.consumed = consumed;
+    await planning.save();
+    await user.save();
     return res.json({ result: true, message: 'Stock mis à jour (consommation).' });
+    
   } catch (e) {
     console.error(e);
     return res.status(500).json({ result: false, error: 'Erreur interne.' });
@@ -83,33 +120,60 @@ router.post('/inventory/consume', async (req, res) => {
 router.post('/inventory/undo', async (req, res) => {
   try {
     const userId = req.user._id;
-    const { items, weekStart, key } = req.body;
-
+    const { items, weekStart, key, consumed, lastKnown  } = req.body;
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ result: false, error: 'items doit être un tableau non vide' });
     }
 
-    // 1️⃣ Récréditer les quantités
-    for (const it of items) {
-      const qty = Math.abs(Number(it.qty));
-      await User.updateOne(
-        { _id: userId, "myproducts._id": it.productId},
-        { $inc: { "myproducts.$.quantite": qty } }
-      );
+    const planning = await Planning.findOne({ userId: req.user._id });
+    if (!planning) return res.status(404).json({ result: false, error: "Planning not found" });
+
+      const week = planning.weeks.find(w => w.weekStart === weekStart);
+    if (!week) return res.status(404).json({ result: false, error: "Week not found" });
+
+    const day = week.days.get(key);
+    if (!day) return res.status(404).json({ result: false, error: "Day not found" });
+    
+    // ⚠️ Vérif de conflit
+    if (day.consumed !== lastKnown) {
+      return res.status(409).json({
+        result: false,
+        error: "conflictStock"
+      });
     }
 
-    // 2️⃣ Mettre consumed = false dans le planning
-    await Planning.updateOne(
-      { userId, "weeks.weekStart": weekStart },
-      { $set: { [`weeks.$.days.${key}.consumed`]: false } }
-    );
+    const user = await User.findById(userId).select('myproducts');
+    if (!user) return res.status(404).json({ result: false, error: 'Utilisateur introuvable' });
 
+    const byId = new Map(user.myproducts.map(p => [String(p._id), p]));
+
+    // validations
+    for (const it of items) {
+      if (!it?.productId || typeof it.qty !== 'number' || it.qty <= 0) {
+        return res.status(400).json({ result: false, error: 'Chaque item doit avoir productId et qty>0' });
+      }
+      const sub = byId.get(String(it.productId));
+      if (!sub) {
+        return res.status(404).json({ result: false, error: `Produit introuvable dans le stock` });
+      }
+    }
+
+    // récrédit
+    for (const it of items) {
+      const sub = byId.get(String(it.productId));
+      sub.quantite = (sub.quantite ?? 0) + it.qty;
+    }
+
+
+     // Mise à jour
+    day.consumed = consumed;
+    await planning.save();
+    await user.save();
     return res.json({ result: true, message: 'Stock rétabli (annulation).' });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ result: false, error: 'Erreur interne.' });
   }
 });
-
 
 module.exports = router;

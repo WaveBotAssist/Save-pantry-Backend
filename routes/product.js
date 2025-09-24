@@ -2,6 +2,8 @@ var express = require('express');
 var router = express.Router();
 const Product = require('../models/product');
 const User = require('../models/users');
+// utilisation du model planning pour delete un produit en meme temps que dans le stock utilisateur
+const Planning = require('../models/planning')
 const fetch = require('node-fetch');
 
 
@@ -20,7 +22,7 @@ router.get('/openfoodfacts/:codebarre', async (req, res) => {
       });
     }
 
-    res.json({ result: true, product : productData });
+    res.json({ result: true, product: productData });
   } catch (e) {
     console.error(e);
     res.status(500).json({ result: false, error: e.message });
@@ -188,7 +190,6 @@ router.put('/myproducts/:productId', async (req, res) => {
 });
 
 
-
 // Route pour supprimer un produit dans le sous-document myproducts d'un utilisateur.
 
 router.delete('/deleteProduct/:productId', async (req, res) => {
@@ -209,6 +210,22 @@ router.delete('/deleteProduct/:productId', async (req, res) => {
 
     if (!updatedUser) {
       return res.status(404).json({ result: false, message: "Utilisateur introuvable ou produit non existant." });
+    }
+
+    // Supprimer le produit dans tous les plannings liés à cet utilisateur apres la suppression du meme produit de myproducts
+    const planning = await Planning.findOne({ userId });
+
+    if (planning) {
+      planning.weeks.forEach(week => {
+        // week.days est une Map → on itère dessus
+        week.days.forEach((day, dayName) => {
+          // On filtre stockItems pour enlever le produit
+          day.stockItems = day.stockItems.filter(item => item._id.toString() !== productId);
+        });
+      });
+
+      // Sauvegarder les modifications
+      await planning.save();
     }
 
     res.json({ result: true, message: "Produit supprimé avec succès.", user: updatedUser });

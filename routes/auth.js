@@ -167,7 +167,6 @@ router.post('/forgot-password', forgotLimiter, async (req, res) => {
       return res.json({ result: false, message: "Email pas existant ou erreur de frape" })
     }
 
-
     const rawToken = crypto.randomBytes(32).toString('hex');
     const selector = crypto.randomBytes(9).toString('hex'); // ~72 bits
     const tokenHash = await bcrypt.hash(rawToken, 10);
@@ -179,7 +178,7 @@ router.post('/forgot-password', forgotLimiter, async (req, res) => {
     url.searchParams.set('s', selector);
     url.searchParams.set('t', rawToken);
     const resetUrl = url.toString();
-
+   
     //utilisation de la fonction pour envoyer le mail dans services/mailer.js
     await sendPasswordResetEmail({
       toEmail: user.email,

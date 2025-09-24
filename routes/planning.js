@@ -21,7 +21,6 @@ router.get('/', async (req, res) => {
 });
 
 
-
 // Sauvegarder / mettre à jour le planning
 router.post('/', async (req, res) => {
   try {
@@ -55,16 +54,17 @@ router.post('/inventory/consume', async (req, res) => {
       return res.status(400).json({ result: false, error: 'items doit être un tableau non vide' });
     }
 
-    const planning = await Planning.findOne({ userId: req.user._id });
+    const planning = await Planning.findOne({ userId: req.user._id });//Il cherche Le planning de l’utilisateur (Planning.findOne).
     if (!planning) return res.status(404).json({ result: false, error: "Planning not found" });
 
-      const week = planning.weeks.find(w => w.weekStart === weekStart);
+      const week = planning.weeks.find(w => w.weekStart === weekStart);//La bonne semaine (weekStart).
     if (!week) return res.status(404).json({ result: false, error: "Week not found" });
 
-    const day = week.days.get(key);
+    const day = week.days.get(key);//Le bon jour (days.get(key)).
     if (!day) return res.status(404).json({ result: false, error: "Day not found" });
     
-    // ⚠️ Vérif de conflit
+
+    // ⚠️  Vérifie que le jour n’a pas déjà été consommé
     if (day.consumed !== lastKnown) {
       return res.status(409).json({
         result: false,
@@ -77,7 +77,7 @@ router.post('/inventory/consume', async (req, res) => {
     // index des sous-documents par _id (string)
     const byId = new Map(user.myproducts.map(p => [String(p._id), p]));
 
-    // validationsy
+  
     for (const it of items) {
       if (!it?.productId || typeof it.qty !== 'number' || it.qty <= 0) {
         return res.status(400).json({ result: false, error: 'Chaque item doit avoir productId et qty>0' });
@@ -86,6 +86,7 @@ router.post('/inventory/consume', async (req, res) => {
       if (!sub) {
         return res.status(404).json({ result: false, error: `Produit introuvable dans le stock` });
       }
+      // Vérifie aussi que le stock de l’utilisateur (user.myproducts) contient assez de quantité.
       if ((sub.quantite ?? 0) < it.qty) {
         return res.status(409).json({
           result: false,
@@ -94,15 +95,13 @@ router.post('/inventory/consume', async (req, res) => {
       }
     }
 
-    // déduction
+    // déduction Si OK → il décrémente les produits dans user.myproducts.
     for (const it of items) {
       const sub = byId.get(String(it.productId));
       sub.quantite = Math.max(0, (sub.quantite ?? 0) - it.qty);
-      // si tu veux, gère aussi un champ "reserved" ici (ex: sub.reserved = Math.max(0, sub.reserved - it.qty))
     }
-    console.log(day.consumed)
 
-     // Mise à jour
+     // Mise à jour Il marque day.consumed = true.
     day.consumed = consumed;
     await planning.save();
     await user.save();
@@ -163,7 +162,6 @@ router.post('/inventory/undo', async (req, res) => {
       const sub = byId.get(String(it.productId));
       sub.quantite = (sub.quantite ?? 0) + it.qty;
     }
-
 
      // Mise à jour
     day.consumed = consumed;

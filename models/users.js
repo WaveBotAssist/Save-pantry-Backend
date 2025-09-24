@@ -27,14 +27,9 @@ const userSchema = mongoose.Schema({
     notificationsEnabled: Boolean,
     tokenpush: String,
     //ajout du choix de la langue de l utilisateur
-    language: {
-        type: String,
-        enum: ['fr', 'en'], // pour éviter les erreurs
-        default: 'fr'
-    },
+    language: { type: String, enum: ['fr', 'en'], default: 'fr' },
     // role de l'utilisateur
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
-
     myproducts: [myproductsSchema],
     notificationSettings: {
         expiry: {

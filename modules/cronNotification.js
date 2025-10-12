@@ -159,6 +159,7 @@ const sendPushNotification = async (pushToken, message) => {
   };
 
   try {
+    // 👉 On découpe le tableau avec chunkPushNotifications car Expo n’autorise pas l’envoi de milliers de notifications d’un coup.
     const chunks = expo.chunkPushNotifications([messageBody]);
     for (let chunk of chunks) {
       const ticketChunk = await expo.sendPushNotificationsAsync(chunk);

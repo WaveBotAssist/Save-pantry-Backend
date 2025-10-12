@@ -15,18 +15,27 @@ const sharedWithSchema =  mongoose.Schema({
   hasSeen: { type: Boolean, default: false } // Nouveau champ pour suivre les notifications
 });
 
-const shoppingListSchema =  mongoose.Schema(
+const shoppingListSchema = mongoose.Schema(
   {
     title: String,
     items: [itemSchema],
     ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     ownerName: String,
     sharedWith: [sharedWithSchema],
+    permanent: { type: Boolean, default: false }, // si true, jamais supprimée
+    expiresAt: { 
+      type: Date,
+      default: function() {
+        // par défaut la liste expire 30 jours après sa création
+        return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      }
+    }
   },
-  {
-    timestamps: true, // Crée automatiquement createdAt et updatedAt
-  }
+  { timestamps: true }
 );
+
+// TTL index : supprime automatiquement quand expiresAt < maintenant
+shoppingListSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const ShoppingLists = mongoose.model('shoppinglists', shoppingListSchema);
 

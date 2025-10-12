@@ -137,7 +137,7 @@ router.post('/myrecipes', async (req, res) => {
     let filter = { langue: lang };
 
     // 2. Si recherche utilisateur, on ajoute le filtre "titre"
-    if (req.body.search && req.body.search.length > 0) {
+    if (search && search.length > 0) {
       filter.titre = { $regex: search, $options: 'i' }; // insensible à la casse
     }
 
@@ -226,7 +226,7 @@ router.post('/myrecipes', async (req, res) => {
     const pages = Math.ceil(total / limit);
     const sliceEnd = limit === 0 ? undefined : skip + limit;
     const paginated = recettesCompatibles.slice(skip, sliceEnd);
-  
+
     return res.json({
       result: true,
       page,

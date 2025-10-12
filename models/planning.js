@@ -2,7 +2,7 @@
 const mongoose = require('mongoose');
 
 const daySchema = new mongoose.Schema({
-  recipe: { type: Object, default: null }, // recette planifiée (id + titre + image + ingrédients…)
+  recipes: { type: [Object], default: [] }, // recette planifiée (id + titre + image + ingrédients…)
   stockItems: { type: Array, default: [] }, // produits planifiés
   consumed: { type: Boolean, default: false } // ✅ état de consommation de la journée
 });

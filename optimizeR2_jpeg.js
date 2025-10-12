@@ -37,6 +37,16 @@ async function listImages() {
 
 async function optimizeAndOverwrite(key) {
   try {
+    // Ignorer les images déjà sauvegardées
+    const backupKey = BACKUP_PREFIX + key;
+    try {
+      await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: backupKey }));
+      console.log(`⏩ Déjà sauvegardé, ignoré : ${key}`);
+      return; // passe à la suivante
+    } catch {
+      // rien, pas encore optimisée → on continue
+    }
+
     // 1. Télécharger l'image originale
     const { Body, ContentType } = await s3.send(
       new GetObjectCommand({ Bucket: BUCKET, Key: key })
@@ -44,7 +54,6 @@ async function optimizeAndOverwrite(key) {
     const buffer = await streamToBuffer(Body);
 
     // 2. Sauvegarde dans backup/
-    const backupKey = BACKUP_PREFIX + key;
     await s3.send(
       new PutObjectCommand({
         Bucket: BUCKET,
@@ -55,13 +64,13 @@ async function optimizeAndOverwrite(key) {
     );
     console.log(`📦 Backup créé : ${backupKey}`);
 
-    // 3. Optimiser avec Sharp
+    // 3. Optimiser
     const optimized = await sharp(buffer)
-      .resize({ width: 800 }) // largeur max 800px
-      .jpeg({ quality: 75 }) // compression JPEG
+      .resize({ width: 800 })
+      .jpeg({ quality: 75 })
       .toBuffer();
 
-    // 4. Ré-uploader (écrasement)
+    // 4. Ré-uploader
     await s3.send(
       new PutObjectCommand({
         Bucket: BUCKET,
@@ -76,6 +85,7 @@ async function optimizeAndOverwrite(key) {
     console.error(`❌ Erreur sur ${key}:`, err.message);
   }
 }
+
 
 (async () => {
   const images = await listImages();

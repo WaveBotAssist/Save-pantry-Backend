@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const router = express.Router();
 const { check, validationResult } = require('express-validator');
+// firebase admin SDK pour verifier les token google
+const admin = require('../services/firebaseAdmin');
 
 //models
 const User = require('../models/users');
@@ -350,5 +352,57 @@ router.post('/email/verify/confirm-otp', async (req, res) => {
   // 3) Sinon, comportement actuel
   return res.json({ ok: true });
 });
+
+
+// ajouter pour connecter nouveau utilisateur avec google
+router.post('/google', async (req, res) => {
+  try {
+    const { idToken, tokenpush } = req.body;
+    if (!idToken) return res.status(400).json({ result: false, error: 'Missing idToken' });
+
+    // 1️⃣ Vérifie le token via Firebase Admin
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    const { email, name } = decoded;
+
+    if (!email) return res.status(400).json({ result: false, error: 'No email in token' });
+
+    // 2️⃣ Cherche ou crée l'utilisateur
+    let user = await User.findOne({ email });
+    if (!user) {
+      user = await User.create({
+        username: name || email.split('@')[0],
+        email,
+        emailVerified: true,
+        password: bcrypt.hashSync(uid2(32), 10), // mot de passe aléatoire juste pour remplir le schéma
+        tokenpush
+      });
+    }
+
+    // 3️⃣ Crée une session (comme ton /signin)
+    const rawToken = uid2(64);
+    await Session.create({
+      userId: user._id,
+      tokenHash: await bcrypt.hash(rawToken, 10),
+      tokenFingerprint: sha256(rawToken),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      device: req.headers['user-agent'] || 'mobile',
+    });
+
+    // 4️⃣ Retourne la réponse standard
+    res.json({
+      result: true,
+      token: rawToken,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      myproducts: user.myproducts || []
+    });
+
+  } catch (err) {
+    console.error('❌ Google Auth Error:', err);
+    res.status(500).json({ result: false, error: 'Google auth failed' });
+  }
+});
+
 
 module.exports = router;

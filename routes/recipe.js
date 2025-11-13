@@ -7,6 +7,7 @@ const { uploadToR2, deleteFromR2 } = require('../services/R2cloudflare');
 const multer = require('multer');
 
 
+
 // Multer pour lire le fichier en RAM (pas sur disque)
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -26,6 +27,18 @@ et à rendre ce fichier accessible dans req.file*/
     res.json({ success: true, url: imageUrl, key });
   } catch (err) {
     console.error("Erreur upload R2:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+// route pour supprimer une image de R2 via sa clé
+router.delete('/r2/delete/:key', async (req, res) => {
+  try {
+    const { key } = req.params;
+    await deleteFromR2(key);
+    res.json({ success: true });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });

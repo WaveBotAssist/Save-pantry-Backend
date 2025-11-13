@@ -101,7 +101,8 @@ router.post(
         email: userDoc.email,
         needEmailVerification: true,
         otpTriggered,
-        resendAfterSec: 60
+        resendAfterSec: 60,
+        revenuecatId: userDoc.revenuecatId
       });
     } catch (err) {
       // Gestion propre du doublon DB (course condition)
@@ -128,6 +129,26 @@ router.post('/signin', loginLimiter, async (req, res) => {
   if (!user.emailVerified) {
     return res.status(400).json({ result: false, error: 'Email not verified' });
   }
+
+  // 🧠 Si utilisateur non premium : on vérifie s'il a déjà une session active
+  if (!user.isPremium) {
+    const activeSession = await Session.findOne({
+      userId: user._id,
+      revokedAt: null,
+      expiresAt: { $gt: new Date() }
+    });
+
+    if (activeSession) {
+      return res.status(403).json({
+        result: false,
+        reason: 'multiple_session',
+        showPaywall: true,
+        message: 'You already have an active session on another device. Upgrade to Premium to connect on multiple devices.'
+      });
+    }
+  }
+
+  // Ensuite, on crée une nouvelle session normalement
   const raw = uid2(64);
   await Session.create({
     userId: user._id,
@@ -136,7 +157,16 @@ router.post('/signin', loginLimiter, async (req, res) => {
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     device: req.headers['user-agent'] || 'mobile'
   });
-  res.json({ result: true, token: raw, username: user.username, role: user.role, email: user.email, myproducts: user.myproducts });
+
+  res.json({
+    result: true,
+    token: raw,
+    username: user.username,
+    role: user.role,
+    email: user.email,
+    myproducts: user.myproducts,
+    revenuecatId: user.revenuecatId,
+  });
 });
 
 
@@ -180,7 +210,7 @@ router.post('/forgot-password', forgotLimiter, async (req, res) => {
     url.searchParams.set('s', selector);
     url.searchParams.set('t', rawToken);
     const resetUrl = url.toString();
-   
+
     //utilisation de la fonction pour envoyer le mail dans services/mailer.js
     await sendPasswordResetEmail({
       toEmail: user.email,
@@ -324,6 +354,11 @@ router.post('/email/verify/confirm-otp', async (req, res) => {
     { $set: { usedAt: new Date() } }
   );
 
+  // 🧩 Si non premium → supprimer les anciennes sessions
+  if (!user.isPremium) {
+    await Session.deleteMany({ userId: user._id });
+  }
+
   // 2) (Optionnel) Auto-signin: créer une session et renvoyer le token
   const rawToken = crypto.randomBytes(48).toString('hex');
   const tokenHash = await bcrypt.hash(rawToken, 10);
@@ -378,6 +413,24 @@ router.post('/google', async (req, res) => {
       });
     }
 
+    // 🧠 Si utilisateur non premium : on vérifie s'il a déjà une session active
+    if (!user.isPremium) {
+      const activeSession = await Session.findOne({
+        userId: user._id,
+        revokedAt: null,
+        expiresAt: { $gt: new Date() }
+      });
+
+      if (activeSession) {
+        return res.status(403).json({
+          result: false,
+          reason: 'multiple_session',
+          showPaywall: true,
+          message: 'You already have an active session on another device. Upgrade to Premium to connect on multiple devices.'
+        });
+      }
+    }
+
     // 3️⃣ Crée une session (comme ton /signin)
     const rawToken = uid2(64);
     await Session.create({
@@ -395,12 +448,100 @@ router.post('/google', async (req, res) => {
       username: user.username,
       email: user.email,
       role: user.role,
-      myproducts: user.myproducts || []
+      myproducts: user.myproducts || [],
+      revenuecatId: user.revenuecatId
     });
 
   } catch (err) {
     console.error('❌ Google Auth Error:', err);
     res.status(500).json({ result: false, error: 'Google auth failed' });
+  }
+});
+
+
+
+// 🔁 Forcer la connexion en supprimant les anciennes sessions
+router.post('/force-login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ result: false, error: 'Missing credentials' });
+    }
+
+    const user = await User.findOne({ email }).select('+password');
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(400).json({ result: false, error: 'Invalid credentials' });
+    }
+
+    // 🚫 Supprime toutes les anciennes sessions
+    await Session.deleteMany({ userId: user._id });
+
+    // ✅ Crée une nouvelle session
+    const raw = uid2(64);
+    await Session.create({
+      userId: user._id,
+      tokenHash: await bcrypt.hash(raw, 10),
+      tokenFingerprint: sha256(raw),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      device: req.headers['user-agent'] || 'mobile',
+    });
+
+    return res.json({
+      result: true,
+      token: raw,
+      username: user.username,
+      email: user.email,
+      myproducts: user.myproducts || [],
+      revenuecatId: user.revenuecatId,
+    });
+  } catch (error) {
+    console.error('Force login error:', error);
+    return res.status(500).json({ result: false, error: 'Server error' });
+  }
+});
+
+
+// 🔁 Forcer la connexion Google (supprime les anciennes sessions)
+router.post('/force-login-google', async (req, res) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken) return res.status(400).json({ result: false, error: 'Missing idToken' });
+
+    // ✅ Vérifie le token Google via Firebase Admin
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    const { email, name } = decoded;
+
+    if (!email) return res.status(400).json({ result: false, error: 'No email in token' });
+
+    let user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ result: false, error: 'User not found' });
+    }
+
+    // 🧹 Supprime toutes les anciennes sessions
+    await Session.deleteMany({ userId: user._id });
+
+    // 🔐 Crée une nouvelle session
+    const rawToken = uid2(64);
+    await Session.create({
+      userId: user._id,
+      tokenHash: await bcrypt.hash(rawToken, 10),
+      tokenFingerprint: sha256(rawToken),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      device: req.headers['user-agent'] || 'mobile',
+    });
+
+    return res.json({
+      result: true,
+      token: rawToken,
+      username: user.username,
+      email: user.email,
+      myproducts: user.myproducts || [],
+      revenuecatId: user.revenuecatId,
+    });
+  } catch (err) {
+    console.error('Force login Google error:', err);
+    return res.status(500).json({ result: false, error: 'Server error' });
   }
 });
 

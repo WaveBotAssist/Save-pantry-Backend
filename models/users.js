@@ -1,4 +1,5 @@
 const mongoose = require('mongoose')
+const crypto = require('crypto');
 
 const myproductsSchema = mongoose.Schema({
     id: String,
@@ -24,6 +25,8 @@ const userSchema = mongoose.Schema({
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },// ajout de lowercase et trim a true pour forcer l email en minuscule en bdd
     emailVerified: { type: Boolean, default: false }, // status de vérification
     password: { type: String, required: true, select: false },
+    revenuecatId: { type: String, unique: true },// identifiant unique pour RevenueCat
+    isPremium: { type: Boolean, default: false },// statut premium
     notificationsEnabled: Boolean,
     tokenpush: String,
     //ajout du choix de la langue de l utilisateur
@@ -43,9 +46,27 @@ const userSchema = mongoose.Schema({
     },
     // Ajout de la liste des recettes favorites
     favorites: [{ type: mongoose.Schema.Types.ObjectId, ref: 'recipes' }]
-    
+
 }, { timestamps: true }) // 👈 ajoute createdAt et updatedAt automatiquement
 
+
+// 🪄 Hook : avant de sauvegarder, générer un revenuecatId si absent. 
+// Utilise un hash SHA-256 de l'email.
+userSchema.pre("save", function (next) {
+    // Si revenuecatId déjà défini, ne rien faire
+    if (this.revenuecatId) return next();
+
+    // Ne rien faire si email absent
+    if (!this.email) return next();
+
+    // Génère le hash uniquement si email présent
+    this.revenuecatId = crypto
+        .createHash("sha256")
+        .update(this.email)
+        .digest("hex");
+
+    next();
+});
 
 const User = mongoose.model('users', userSchema);
 

@@ -1,8 +1,8 @@
 const mongoose = require('mongoose');
 const sessionSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'users', index: true, required: true },
-  tokenHash: { type: String, required: true },
-  tokenFingerprint: { type: String, index: true, required: true },
+  tokenHash: { type: String, required: true },// bcrypt hash pour la vérification
+  tokenFingerprint: { type: String, index: true, required: true },//SHA-256 sert a retrouver une session spécifique en base
   expiresAt: { type: Date, index: true, required: true },
   device: { type: String, default: 'mobile' },
   createdAt: { type: Date, default: Date.now },

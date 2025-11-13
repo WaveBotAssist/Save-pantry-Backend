@@ -3,72 +3,29 @@ const router = express.Router()
 const checkRole = require('../middlewares/checkRole');
 const User = require('../models/users');
 const Recipes = require('../models/recipe');
-const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { uploadToR2, deleteFromR2 } = require('../services/R2cloudflare');
 const multer = require('multer');
-//sharp pour optimizer la taille des images
-const sharp = require("sharp");
 
-// Setup S3 client (compatible R2)
-const s3 = new S3Client({
-  region: 'auto',
-  endpoint: process.env.R2_ENDPOINT,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  },
-});
 
 // Multer pour lire le fichier en RAM (pas sur disque)
 const upload = multer({ storage: multer.memoryStorage() });
 
 //ci-dessous les deux routes pour upload ou remove une image de R2 cloudflare
 // ---- UPLOAD ROUTE ----
-router.post('/r2/upload', upload.single('file'), async (req, res) => {
+router.post('/r2/upload', upload.single('file'), async (req, res) => {/*upload.single('file') est un middleware de multer.
+Il sert à analyser la requête HTTP quand elle contient un fichier uploadé (de type multipart/form-data)
+et à rendre ce fichier accessible dans req.file*/
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, error: "Aucun fichier envoyé" });
     }
+   const { url, key } = await uploadToR2(req.file.buffer, req.file.originalname, 'recipes-users');
 
-    // 🔹 1. Créer un nom unique
-    const key = `images/${Date.now()}_${req.file.originalname.replace(/\s+/g, "_")}`;
-
-    // 🔹 2. Optimiser avec Sharp (JPEG réduit)
-    const optimizedImage = await sharp(req.file.buffer)
-      .rotate()              // ✅ corrige l'orientation selon EXIF
-      .resize({ width: 800 })      // redimensionner max 800px
-      .jpeg({ quality: 75 })       // compresser
-      .toBuffer();
-
-    // 🔹 3. Envoyer dans Cloudflare R2
-    const command = new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET,
-      Key: key,
-      Body: optimizedImage,
-      ContentType: "image/jpeg", // forcer le bon type
-    });
-    await s3.send(command);
-
-    // 🔹 4. Générer l’URL publique
-    const imageUrl = `${process.env.R2_PUBLIC_BASE}/${key}`;
+    const imageUrl = url; // URL publique de l’image
 
     res.json({ success: true, url: imageUrl, key });
   } catch (err) {
     console.error("Erreur upload R2:", err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-
-// ---- DELETE ROUTE ----
-router.delete('/r2/delete/:key', async (req, res) => {
-  try {
-    const command = new DeleteObjectCommand({
-      Bucket: process.env.R2_BUCKET,
-      Key: decodeURIComponent(req.params.key),
-    });
-    await s3.send(command);
-    res.json({ success: true });
-  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -90,6 +47,7 @@ router.post('/myrecipes', async (req, res) => {
       return res.status(400).json({ result: false, error: "Token manquant" });
 
     const user = await User.findOne({ _id: owner }, { myproducts: 1 });
+
     if (!user)
       return res.status(404).json({ result: false, error: "Utilisateur introuvable" });
 
@@ -240,6 +198,8 @@ router.post('/myrecipes', async (req, res) => {
   }
 });
 
+
+
 // Route pour soumettre une recette communautaire
 router.post('/submit', async (req, res) => {
   try {
@@ -247,15 +207,37 @@ router.post('/submit', async (req, res) => {
       titre, categorie, langue, source, url, image,
       tags, ingredients, instructions, temps_preparation, portion, difficulte
     } = req.body;
-    //ajout de l id de l utilisateur en bdd
+
     const userId = req.user._id;
-    // Validation de base
+
+    // 🧩 Validation de base
     if (!image || !titre || !titre.trim() || !categorie || !Array.isArray(ingredients) || !ingredients.length ||
       !Array.isArray(instructions) || !instructions.length) {
-      return res.status(400).json({ result: false, error: "Tous les champs marqués d'un astérisque (*) sont obligatoires." });
+      return res.status(400).json({
+        result: false,
+        error: "Tous les champs marqués d'un astérisque (*) sont obligatoires."
+      });
     }
 
-    // Par défaut, on met en attente de validation
+    // 🧠 Récupère l'utilisateur complet
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ result: false, error: "Utilisateur introuvable." });
+    }
+
+    // 🔒 Vérifie le nombre de recettes déjà soumises par cet utilisateur
+    const recipeCount = await Recipes.countDocuments({ auteur: userId });
+  
+    // ⚙️ Limite pour les utilisateurs non premium
+    if (!user.isPremium && recipeCount >= 10) {// changer la limite de recettes permis pour les non-premium
+      return res.status(403).json({
+        result: false,
+        message: "Limite atteinte (10 recettes). Passez à la version Premium pour en ajouter davantage.",
+        canUpgrade: true,
+      });
+    }
+
+    // ✅ Création de la recette (en attente de validation)
     const newRecipe = new Recipes({
       titre,
       categorie,
@@ -270,17 +252,22 @@ router.post('/submit', async (req, res) => {
       portion: portion || null,
       difficulte: difficulte || "facile",
       auteur: userId,
-      status: "pending"  // Ajoute ce champ au schéma pour la modération !
+      status: "pending"
     });
 
     await newRecipe.save();
 
-    return res.json({ result: true, message: "Recette soumise avec succès ! Elle sera visible après validation." });
+    return res.json({
+      result: true,
+      message: "Recette soumise avec succès ! Elle sera visible après validation."
+    });
 
   } catch (err) {
+    console.error("Erreur route /submit:", err);
     return res.status(500).json({ result: false, error: err.message });
   }
 });
+
 
 
 // route pour retrouver toutes les recettes que l utilisateur a proposé (utiliser dans MySharedRecipesScreen.js)

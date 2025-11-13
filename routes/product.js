@@ -5,7 +5,51 @@ const User = require('../models/users');
 // utilisation du model planning pour delete un produit en meme temps que dans le stock utilisateur
 const Planning = require('../models/planning')
 const fetch = require('node-fetch');
+const { uploadToR2, deleteFromR2 } = require('../services/R2cloudflare');
+const multer = require('multer');
 
+// Multer pour lire le fichier en RAM (pas sur disque)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 } // 5 Mo max
+});
+
+
+// ---- UPLOAD ROUTE ----
+router.post('/r2/upload', upload.single('photoproduct'), async (req, res) => {/*upload.single('file') est un middleware de multer.
+Il sert à analyser la requête HTTP quand elle contient un fichier uploadé (de type multipart/form-data)
+et à rendre ce fichier accessible dans req.file*/
+  try {
+     if (!req.user?.isPremium) {
+      return res.status(403).json({ success: false, error: "Compte non premium — upload R2 désactivé." });
+    }
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: "Aucun fichier envoyé" });
+    }
+
+    const { url, key } = await uploadToR2(req.file.buffer, req.file.originalname, 'products-users');
+    console.log("Image uploadée sur R2:", key);
+    const imageUrl = url; // URL publique de l’image
+
+    res.json({ success: true, url: imageUrl, key });
+  } catch (err) {
+    console.error("Erreur upload R2:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+// route pour supprimer une image de R2 via sa clé
+router.delete('/r2/delete/:key', async (req, res) => {
+  try {
+
+    const { key } = req.params;
+    await deleteFromR2(key);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // route pour récupérer les informations d'un produit via son code-barres depuis l'API OpenFoodFacts
 router.get('/openfoodfacts/:codebarre', async (req, res) => {
@@ -48,6 +92,14 @@ router.post('/addproduct', async (req, res) => {
       return res.status(404).json({
         result: false,
         message: 'Utilisateur introuvable.',
+      });
+    }
+
+    // Limite pour les utilisateurs non premium
+    if (!user.isPremium && user.myproducts.length >= 30) { // changer la limite de produits permis pour les non-premium
+      return res.status(403).json({
+        result: false,
+        message: "Limite atteinte (30 produits). Passez à la version Premium pour en ajouter davantage.",
       });
     }
 
@@ -144,21 +196,46 @@ router.post('/addproduct', async (req, res) => {
 
 
 // Route pour mettre à jour les données dans le sous-document myproducts
-
 router.put('/myproducts/:productId', async (req, res) => {
   const userId = req.user._id;
   const { productId } = req.params;
-  const { codebarre, prix, expiration, ...otherUpdates } = req.body;
+  const { codebarre, prix, expiration, image, ...otherUpdates } = req.body;
 
   if (!userId) {
     return res.status(401).json({ result: false, error: "Token manquant" });
   }
 
   try {
-    // Construire les updates
+    // 🔍 Récupérer l'utilisateur et le produit actuel
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ result: false, error: "Utilisateur introuvable" });
+    }
+
+    const currentProduct = user.myproducts.find(p => p._id.toString() === productId);
+    if (!currentProduct) {
+      return res.status(404).json({ result: false, error: "Produit introuvable" });
+    }
+
+    // 🗑️ Si nouvelle image fournie ET ancienne image R2 existe
+    if (image && currentProduct.image && currentProduct.image.includes('r2.dev')) {
+      console.log("🗑️ Suppression ancienne image backend:", currentProduct.image);
+      
+      try {
+        const oldKey = currentProduct.image.split('/').slice(-2).join('/');
+        await deleteFromR2(oldKey);
+        console.log("✅ Ancienne image supprimée");
+      } catch (delErr) {
+        console.error("⚠️ Échec suppression ancienne image:", delErr);
+        // On continue quand même la mise à jour
+      }
+    }
+
+    // 📝 Construire les updates
     const updates = {
       "myproducts.$.codebarre": codebarre,
       "myproducts.$.prix": prix,
+      "myproducts.$.image": image || currentProduct.image, // ✅ Garder ancienne si pas de nouvelle
       "myproducts.$.updatedAt": new Date(),
       ...Object.keys(otherUpdates).reduce((acc, key) => {
         acc[`myproducts.$.${key}`] = otherUpdates[key];
@@ -166,7 +243,7 @@ router.put('/myproducts/:productId', async (req, res) => {
       }, {})
     };
 
-    // Si l'expiration est modifiée -> reset notifiedExpired
+    // Si l'expiration est modifiée → reset notifiedExpired
     if (expiration !== undefined) {
       updates["myproducts.$.expiration"] = expiration;
       updates["myproducts.$.notifiedExpired"] = false;
@@ -179,26 +256,36 @@ router.put('/myproducts/:productId', async (req, res) => {
     );
 
     if (!updatedUser) {
-      return res.status(404).json({ result: false, error: "Produit ou utilisateur introuvable" });
+      return res.status(404).json({ result: false, error: "Mise à jour échouée" });
     }
 
+    console.log("✅ Produit mis à jour avec succès");
     res.json({ result: true, user: updatedUser });
 
   } catch (err) {
+    console.error("❌ Erreur mise à jour produit:", err);
     res.status(500).json({ result: false, error: err.message });
   }
 });
 
 
+
 // Route pour supprimer un produit dans le sous-document myproducts d'un utilisateur.
 
-router.delete('/deleteProduct/:productId', async (req, res) => {
+router.delete('/deleteProduct/:productId', upload.single('photoproduct'), async (req, res) => {
   try {
     const userId = req.user._id; // Récupérer l'ID de l'utilisateur à partir du token
     const { productId } = req.params; // ID du produit à supprimer
+    const { imageKey } = req.body; // Clé de l'image à supprimer de R2 (si existante)
 
     if (!userId) {
       return res.status(401).json({ result: false, message: "Token manquant." });
+    }
+    // Supprimer l'image de R2 si une clé est fournie
+    if (imageKey) {
+      const decodedKey = imageKey.replace(`${process.env.R2_PUBLIC_BASE}/`, '');
+      await deleteFromR2(decodedKey);
+      console.log('image supprimée de R2:', decodedKey);
     }
 
     // Trouver l'utilisateur et supprimer le produit de `myproducts`

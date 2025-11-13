@@ -60,6 +60,31 @@ router.put('/updateLanguage', checkToken, async (req, res) => {
 });
 
 
+// route pour mettre a jour le statut premium de l user après un achat réussi
+router.put('/updatePremium', checkToken, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { isPremium } = req.body;
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { isPremium },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ result: false, message: 'Utilisateur introuvable.' });
+    }
+
+    res.json({ result: true, user });
+  } catch (err) {
+    console.error('Erreur updatePremium:', err);
+    res.status(500).json({ result: false, error: err.message });
+  }
+});
+
+
+
 //cron pour mettre a jour les prix des produits
 cron.schedule("0 0 * * *", async () => {
   console.log("🔄 Mise à jour des prix en cours...");

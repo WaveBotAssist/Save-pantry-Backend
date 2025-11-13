@@ -1,3 +1,4 @@
+// ce middleware prolonge la durée de vie de la session si elle expire dans moins de 24h
 const Session = require('../models/session');
 module.exports = async function slideSession(req, res, next) {
   try {

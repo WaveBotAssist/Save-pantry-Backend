@@ -80,7 +80,7 @@ router.post('/create-and-share', async (req, res) => {
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     const io = req.app.get("io");
-    emitListUpdated(io, newList._id);
+    await emitListUpdated(io, newList._id);
 
     // 🔔 Notifications
     const sharedUserIds = sharedWithCleaned.map(u => u.userId);
@@ -176,7 +176,6 @@ router.get('/getList', async (req, res) => {
   }
 });
 
-
 // Supprimer un item d’une liste
 router.delete('/deleteItem', async (req, res) => {
   const { listId, itemId } = req.body;
@@ -209,7 +208,7 @@ router.delete('/deleteItem', async (req, res) => {
 
     // 👇 Émission de l’évènement socket
     const io = req.app.get("io");
-    emitItemDeleted(io, listId, itemId);
+    await emitItemDeleted(io, listId, itemId);
 
     res.json({ success: true, message: "Item supprimé." });
 
@@ -237,7 +236,7 @@ router.post('/toggleItem', async (req, res) => {
 
     const io = req.app.get("io");
 
-    emitItemUpdated(io, listId, itemId, checked);
+    await emitItemUpdated(io, listId, itemId, checked);
 
     return res.json({ success: true });
   } catch (err) {

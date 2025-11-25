@@ -9,5 +9,6 @@
     "soon_many": "🕑 Reminder: {{count}} items expire in 3 days.",
     "Headsup": "Stock Alert",
     "expired_reminder": "⚠️ You still have {{count}} expired items in your stock.",
-    "insufficientStock": "Not enough stock for the added quantities"
+    "insufficientStock": "Not enough stock for the added quantities",
+    "listSyncedOnDevices": "List synced across your devices"
 }

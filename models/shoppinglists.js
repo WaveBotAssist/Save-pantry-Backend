@@ -11,6 +11,7 @@ const itemSchema =  mongoose.Schema({
 
 const sharedWithSchema =  mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  username: String,
   canEdit: { type: Boolean, default: false },
   hasSeen: { type: Boolean, default: false } // Nouveau champ pour suivre les notifications
 });
@@ -22,7 +23,6 @@ const shoppingListSchema = mongoose.Schema(
     ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     ownerName: String,
     sharedWith: [sharedWithSchema],
-    permanent: { type: Boolean, default: false }, // si true, jamais supprimée
     expiresAt: { 
       type: Date,
       default: function() {

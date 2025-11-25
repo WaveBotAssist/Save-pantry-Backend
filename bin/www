@@ -7,6 +7,7 @@
 var app = require('../app');
 var debug = require('debug')('backend:server');
 var http = require('http');
+const { Server } = require('socket.io'); // 🔥 AJOUT
 
 /**
  * Get port from environment and store in Express.
@@ -20,6 +21,53 @@ app.set('port', port);
  */
 
 var server = http.createServer(app);
+
+/**
+ * 🔥 NOUVEAU : Initialiser Socket.IO
+ */
+const io = new Server(server, {
+  cors: {
+    origin: "https://lively-marin-savepantry-9e49e14e.koyeb.app/", // À adapter selon ton front-end pour une version web de save pantry
+    methods: ["GET", "POST"]
+  }
+});
+
+//    1) On attache l'instance io à Express via app.set('io')
+//    → Cela permet d'accéder à io depuis n'importe quelle route (ex : pour 
+//      émettre un événement "list-updated" après une modification en base).
+app.set('io', io);
+
+//    2) io.on('connection', ...) est exécuté à chaque nouvelle connexion client.
+//    → Chaque utilisateur obtient un socket.id unique.
+io.on('connection', (socket) => {
+  console.log('✅ Utilisateur connecté:', socket.id);
+
+ // 3) join-list(listId)
+//    → Le client rejoint une "room" spécifique à une liste partagée.
+//    → Ainsi, seuls les utilisateurs concernés reçoivent les mises à jour.
+  socket.on('join-list', (listId) => {
+    socket.join(`list-${listId}`);
+    console.log(`Socket ${socket.id} a rejoint la liste ${listId}`);
+  });
+// 4) leave-list(listId)
+//    → Le client quitte la room lorsqu'il n'affiche plus la liste.
+  socket.on('leave-list', (listId) => {
+    socket.leave(`list-${listId}`);
+    console.log(`Socket ${socket.id} a quitté la liste ${listId}`);
+  });
+// 5) disconnect
+//    → Permet de log ou nettoyer si besoin.
+  socket.on('disconnect', () => {
+    console.log('❌ Utilisateur déconnecté:', socket.id);
+  });
+});
+
+// Résultat :
+// Chaque liste partagée possède son propre canal temps réel ("list-<id>").
+// Dès qu'une liste est modifiée, seule la room correspondante reçoit
+// l'événement "list-updated", ce qui évite de notifier tous les utilisateurs.
+//
+// C'est le cœur de la synchronisation en temps réel du shopping list.
 
 /**
  * Listen on provided port, on all network interfaces.
@@ -87,4 +135,5 @@ function onListening() {
     ? 'pipe ' + addr
     : 'port ' + addr.port;
   debug('Listening on ' + bind);
+  console.log('🚀 Serveur démarré sur le port', port);
 }

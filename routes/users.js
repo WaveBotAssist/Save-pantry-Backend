@@ -3,8 +3,99 @@ var router = express.Router();
 const checkToken = require('../middlewares/checkToken');
 const User = require('../models/users')
 const cron = require('node-cron');
+const fetch = require('node-fetch')
 
 const updateProductPrice = require('../modules/updateProductPrice')
+
+
+/**
+ * 🔐 Route SÉCURISÉE pour vérifier le statut premium
+ * Appelle directement l'API RevenueCat côté serveur
+ */
+router.post('/sync-premium', checkToken, async (req, res) => {
+  try {
+    const user = req.user;
+  console.log('ID REVENUECAT',user.revenuecatId)
+    if (!user.revenuecatId) {
+      return res.status(400).json({
+        result: false,
+        message: 'Utilisateur sans RevenueCat ID'
+      });
+    }
+
+    // ✅ APPEL SERVEUR à RevenueCat (impossible à falsifier par le client)
+    const response = await fetch(
+      `https://api.revenuecat.com/v1/subscribers/${user.revenuecatId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.REVENUECAT_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (!response.ok) {
+      console.error('Erreur API RevenueCat:', response.status);
+      return res.status(500).json({
+        result: false,
+        message: 'Erreur communication avec RevenueCat'
+      });
+    }
+
+    const data = await response.json();
+
+    // ✅ Vérifier si l'entitlement "premium" est actif
+    const isPremiumRevenueCat =
+      !!data.subscriber?.entitlements?.premium?.expires_date &&
+      new Date(data.subscriber.entitlements.premium.expires_date) > new Date();
+
+    console.log(`🔍 Vérification pour ${user.username}: ${isPremiumRevenueCat}`);
+
+    // 🔄 Mettre à jour la BDD si nécessaire
+    if (user.isPremium !== isPremiumRevenueCat) {
+      const User = require('../models/users');
+      await User.updateOne(
+        { _id: user._id },
+        { isPremium: isPremiumRevenueCat }
+      );
+
+      console.log(`✅ Statut mis à jour: ${user.isPremium} → ${isPremiumRevenueCat}`);
+
+      // 🧹 Si passage de premium à free, supprimer les sessions multiples
+      if (!isPremiumRevenueCat && user.isPremium) {
+        const Session = require('../models/session');
+        const sessions = await Session.find({
+          userId: user._id,
+          revokedAt: null,
+          expiresAt: { $gt: new Date() }
+        }).sort({ createdAt: -1 });
+
+        if (sessions.length > 1) {
+          await Session.deleteMany({
+            userId: user._id,
+            _id: { $ne: sessions[0]._id }
+          });
+          console.log(`🧹 ${sessions.length - 1} session(s) supprimée(s)`);
+        }
+      }
+    }
+
+    res.json({
+      result: true,
+      isPremium: isPremiumRevenueCat,
+      updated: user.isPremium !== isPremiumRevenueCat
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur sync-premium:', error);
+    res.status(500).json({
+      result: false,
+      message: 'Erreur serveur',
+      error: error.message
+    });
+  }
+});
+
 
 
 //  route pour préremplir le formulaire de l user avec ses préférences actuelles
@@ -58,31 +149,6 @@ router.put('/updateLanguage', checkToken, async (req, res) => {
   await User.findByIdAndUpdate(userId, { language });
   res.json({ result: true, message: 'Langue mise à jour' });
 });
-
-
-// route pour mettre a jour le statut premium de l user après un achat réussi
-router.put('/updatePremium', checkToken, async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { isPremium } = req.body;
-
-    const user = await User.findByIdAndUpdate(
-      userId,
-      { isPremium },
-      { new: true }
-    );
-
-    if (!user) {
-      return res.status(404).json({ result: false, message: 'Utilisateur introuvable.' });
-    }
-
-    res.json({ result: true, user });
-  } catch (err) {
-    console.error('Erreur updatePremium:', err);
-    res.status(500).json({ result: false, error: err.message });
-  }
-});
-
 
 
 //cron pour mettre a jour les prix des produits

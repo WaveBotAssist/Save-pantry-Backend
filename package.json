@@ -27,11 +27,13 @@
     "mongoose": "^8.9.5",
     "morgan": "~1.9.1",
     "multer": "^2.0.2",
+    "node-cache": "^5.1.2",
     "node-cron": "^3.0.3",
     "node-fetch": "2",
     "node-mailjet": "^6.0.9",
     "nodemailer": "^6.10.0",
     "sharp": "^0.34.3",
+    "socket.io": "^4.8.1",
     "uid2": "^1.0.0"
   },
   "devDependencies": {

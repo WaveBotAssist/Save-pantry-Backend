@@ -99,7 +99,7 @@ router.post('/addproduct', async (req, res) => {
     if (!user.isPremium && user.myproducts.length >= 30) { // changer la limite de produits permis pour les non-premium
       return res.status(403).json({
         result: false,
-        message: "Limite atteinte (30 produits). Passez à la version Premium pour en ajouter davantage.",
+        message: 'fullStockMessage'
       });
     }
 
@@ -108,7 +108,7 @@ router.post('/addproduct', async (req, res) => {
       // Vérifier le doublon basé sur le name
       const existProduct = user.myproducts.some((product) => product.name === name);
       if (existProduct) {
-        return res.status(400).json({ result: false, message: 'Produit déjà présent.' });
+        return res.status(400).json({ result: false, message: 'productexist' });
       }
 
       user.myproducts.push({

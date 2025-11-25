@@ -1,5 +1,6 @@
 {
     "receptionlist": "Vous avez reçu une nouvelle liste de",
+    "youhave": "vous avez",
     "expired_names": "❌ Trop tard : {{names}} périmé(s).",
     "expired_many": "❌ Trop tard : {{count}} produits périmés.",
     "today_names": "⚠️ Attention : {{names}} expire(nt) aujourd’hui.",
@@ -8,5 +9,6 @@
     "soon_many": "🕑 Petit rappel : {{count}} produits expirent dans 3 jours.",
     "Headsup": "Alerte stock",
     "expired_reminder": "⚠️ Vous avez encore {{count}} produits périmés dans votre stock.",
-    "insufficientStock": "Pas assez en stock pour les quantités ajoutées"
+    "insufficientStock": "Pas assez en stock pour les quantités ajoutées",
+    "listSyncedOnDevices": "Liste synchronisée sur vos appareils"
 }

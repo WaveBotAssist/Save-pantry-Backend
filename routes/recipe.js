@@ -242,7 +242,7 @@ router.post('/submit', async (req, res) => {
     const recipeCount = await Recipes.countDocuments({ auteur: userId });
   
     // ⚙️ Limite pour les utilisateurs non premium
-    if (!user.isPremium && recipeCount >= 10) {// changer la limite de recettes permis pour les non-premium
+    if (!user.isPremium && recipeCount >= 10 ) {// changer la limite de recettes permis pour les non-premium
       return res.status(403).json({
         result: false,
         message: "Limite atteinte (10 recettes). Passez à la version Premium pour en ajouter davantage.",

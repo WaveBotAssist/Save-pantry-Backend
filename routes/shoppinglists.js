@@ -5,102 +5,116 @@ const User = require('../models/users')
 const { Expo } = require('expo-server-sdk');
 const expo = new Expo();
 const i18next = require('i18next');
+const { notifyListUpdated } = require("../utils/socketSync");
 
 // route pour créé liste de course et la partager
+
 router.post('/create-and-share', async (req, res) => {
-  const authHeader = req.headers["authorization"];
-  console.log(authHeader)
   try {
     const { title, items, sharedUsers, canEdit } = req.body;
     const owner = await User.findById(req.user._id);
+    
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📤 [CREATE-SHARE] Début création');
+    console.log('  User:', owner.username);
+    console.log('  User ID:', owner._id);
+    console.log('  sharedUsers:', sharedUsers);
 
-    if (!items || !Array.isArray(sharedUsers)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Items ou liste d’utilisateurs invalide',
-      });
+    // ✅ TOUJOURS ajouter le propriétaire avec son username
+    const sharedWithCleaned = [{
+      userId: owner._id,
+      username: owner.username, // 🆕 AJOUTÉ
+      canEdit: true,
+      hasSeen: true,
+    }];
+
+    console.log('  👤 Propriétaire ajouté');
+
+    // Ajouter les autres utilisateurs
+    if (Array.isArray(sharedUsers) && sharedUsers.length > 0) {
+      console.log('  🔍 Recherche utilisateurs...');
+      
+      for (const username of sharedUsers) {
+        const user = await User.findOne({
+          username: { $regex: new RegExp(`^${username}$`, 'i') },
+        });
+
+        if (!user) {
+          console.warn(`  ⚠️ Utilisateur "${username}" non trouvé`);
+          continue;
+        }
+
+        if (user._id.toString() === owner._id.toString()) {
+          console.warn(`  ⚠️ Self-share ignoré`);
+          continue;
+        }
+
+        const alreadyAdded = sharedWithCleaned.some(s =>
+          s.userId.equals(user._id)
+        );
+        if (alreadyAdded) {
+          console.warn(`  ⚠️ Doublon ignoré`);
+          continue;
+        }
+
+        console.log(`  ✅ Ajout: ${user.username}`);
+
+        sharedWithCleaned.push({
+          userId: user._id,
+          username: user.username, // 🆕 AJOUTÉ
+          canEdit: !!canEdit,
+          hasSeen: false,
+        });
+      }
     }
 
-    const sharedWithCleaned = [];
+    console.log('  📋 sharedWithCleaned:', sharedWithCleaned.length, 'personne(s)');
+    sharedWithCleaned.forEach(sw => {
+      console.log(`    - ${sw.username} (${sw.userId})`);
+    });
 
-    // 🔄 On boucle sur tous les usernames à qui on veut partager
-    for (const username of sharedUsers) {
-      const user = await User.findOne({
-        username: { $regex: new RegExp(`^${username}$`, 'i') },
-      });
-
-      if (!user) {
-        console.warn(`Utilisateur ${username} non trouvé`);
-        continue;
-      }
-
-      // 🚫 Éviter de se partager à soi-même
-      if (user._id.toString() === owner._id.toString()) {
-        console.warn(`Tentative de partage avec soi-même (${username}) ignorée`);
-        continue;
-      }
-
-      // 🧼 Éviter les doublons dans la liste
-      const alreadyAdded = sharedWithCleaned.some(shared =>
-        shared.userId.equals(user._id)
-      );
-      if (alreadyAdded) {
-        console.warn(`Utilisateur ${username} déjà ajouté`);
-        continue;
-      }
-
-      sharedWithCleaned.push({
-        userId: user._id,
-        canEdit: !!canEdit,
-        hasSeen: false,
-      });
-    }
-
-    // ⚠️ Si tous les utilisateurs ont été ignorés (ex: partage avec soi-même uniquement)
-    if (sharedUsers.length > 0 && sharedWithCleaned.length === 0) {
-      return res.status(400).json({
-        success: false,
-        silentlyIgnored: true,
-      });
-    }
-
-    // ✅ Création de la liste partagée
+    // Créer la liste
     const newList = await ShoppingList.create({
-      title,
+      title: title || 'Ma liste',
       items,
       ownerId: owner._id,
       ownerName: owner.username,
-      sharedWith: sharedWithCleaned,
+      sharedWith: sharedWithCleaned, // Contient maintenant les usernames !
     });
 
-    // 🧠 Récupérer les utilisateurs avec qui on a vraiment partagé
-    const sharedUserIds = sharedWithCleaned.map(u => u.userId);
+    console.log('  ✅ Liste créée !');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
+    const io = req.app.get("io");
+    notifyListUpdated(io, newList._id);
+
+    // 🔔 Notifications
+    const sharedUserIds = sharedWithCleaned.map(u => u.userId);
     const sharedUsersData = await User.find({
       _id: { $in: sharedUserIds }
-    }).select('tokenpush notificationSettings language');
+    }).select('tokenpush notificationSettings language username');
 
-    // 🔔 On ne garde que ceux qui ont activé les notifications de partage
     const usersWithNotificationsEnabled = sharedUsersData.filter(
       user => user.notificationSettings?.share?.enabled
     );
 
-    // 📲 Construction des messages push
     const messages = [];
 
     for (const user of usersWithNotificationsEnabled) {
       if (!user.tokenpush) continue;
 
-      const lang = user.language || 'fr'; // Par défaut, français
+      const lang = user.language || 'fr';
       i18next.changeLanguage(lang);
 
-      const title = 'Save Pantry';
-      const body = `${i18next.t('receptionlist')} ${owner.username}`;
+      const isSelf = user._id.equals(owner._id);
+      const body = isSelf
+        ? i18next.t('listSyncedOnDevices')
+        : `${i18next.t('receptionlist')} ${owner.username}`;
 
       messages.push({
         to: user.tokenpush,
         sound: 'default',
-        title,
+        title: 'Save Pantry',
         body,
         data: {
           screen: 'ShoppingList',
@@ -109,27 +123,26 @@ router.post('/create-and-share', async (req, res) => {
       });
     }
 
+    if (messages.length > 0) {
+      setTimeout(() => {
+        const chunks = expo.chunkPushNotifications(messages);
+        chunks.forEach(chunk =>
+          expo.sendPushNotificationsAsync(chunk)
+            .then(tickets => console.log('📲 Notifications:', tickets.length))
+            .catch(err => console.error('❌ Erreur notifs:', err))
+        );
+      }, 1000);
+    }
 
-    // ⏱️ Envoi des notifications après un court délai (optionnel)
-    setTimeout(() => {
-      const chunks = expo.chunkPushNotifications(messages);
-      chunks.forEach(chunk =>
-        expo.sendPushNotificationsAsync(chunk)
-          .then(tickets => console.log('tickets:', tickets))
-          .catch(err => console.error(err))
-      );
-    }, 1000); // 1000ms = 1 seconde (change à 60000 pour 1 minute)
-
-    // ✅ Réponse de succès
     res.status(201).json({
       success: true,
-      message: 'Liste créée et partagée avec succès',
+      message: 'Liste créée avec succès',
       listId: newList._id,
-      sharedWith: newList.sharedWith.length,
+      sharedWith: sharedWithCleaned.length,
     });
 
   } catch (error) {
-    console.error('Erreur create-and-share:', error);
+    console.error('❌ [CREATE-SHARE] Erreur:', error);
     res.status(500).json({
       success: false,
       message: 'Erreur serveur',
@@ -137,7 +150,6 @@ router.post('/create-and-share', async (req, res) => {
     });
   }
 });
-
 
 // route pour affichage de la liste de course partagée
 router.get('/getList', async (req, res) => {
@@ -172,32 +184,29 @@ router.get('/getList', async (req, res) => {
 
 
 // Modifier le "checked" d’un item dans une liste
+
 router.post('/toggleItem', async (req, res) => {
   const { listId, itemId, checked } = req.body;
 
   try {
-    const ownerId = req.user._id;
-    const list = await ShoppingList.findOne({
-      _id: listId,
-      $or: [
-        { ownerId }, //recherche des listes dont l utilisateur est proprietaire
-        { sharedWith: { $elemMatch: { userId: ownerId, canEdit: true } } }// recherche les listes partagées avec l'utilisateur ET où il a les droits de modification
-      ]
-    });
+    const list = await ShoppingList.findById(listId);
+    if (!list) return res.status(404).json({ error: "Liste introuvable" });
 
-    if (!list) return res.status(404).json({ error: 'Liste introuvable ou accès refusé' });
-    // on va chercher le produit concerner grace a son id dans la liste de course
     const item = list.items.id(itemId);
-    if (!item) return res.status(404).json({ error: 'Élément non trouvé' });
-    //on remplace sa valeur par true ou false et sauvegarde
+    if (!item) return res.status(404).json({ error: "Item introuvable" });
+
     item.checked = checked;
     await list.save();
 
-    res.json({ message: 'État mis à jour', item });
-  } catch (error) {
-    res.status(500).json({ error: 'Erreur serveur' });
+    const io = req.app.get("io");
+    notifyListUpdated(io, listId);
+
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
+
 
 
 // route pour effacer une seule liste de course par son id
@@ -220,6 +229,10 @@ router.delete('/deleteList', async (req, res) => {
     }
 
     await ShoppingList.deleteOne({ _id: listId });
+
+    const io = req.app.get("io");
+    notifyListUpdated(io, listId);
+
 
     return res.status(200).json({ result: true, message: "La liste a bien été supprimée." });
   } catch (err) {
@@ -254,6 +267,10 @@ router.delete('/deleteAllLists', async (req, res) => {
     }
 
     await ShoppingList.deleteMany({ _id: { $in: allowedIds } });
+
+    const io = req.app.get("io");
+    allowedIds.forEach(id => notifyListUpdated(io, id));
+
 
     res.json({ result: true, message: `${allowedIds.length} liste(s) supprimée(s).` });
   } catch (err) {

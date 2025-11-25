@@ -12,6 +12,10 @@ const middleware = require('i18next-http-middleware');
 //ajout des middlewares/checkToken.js et slideSessions.js créé pour la gestion des tokens et des sessions
 const checkToken = require('./middlewares/checkToken');
 const slideSession = require('./middlewares/slideSession');
+const { startPremiumSyncJob } = require('./utils/premiumSync');
+
+// Démarrer le cron au lancement du serveur pour Synchroniser les statuts Premium des utilisateurs avec RevenueCat
+startPremiumSyncJob();
 
 i18next
   .use(Backend)

@@ -97,12 +97,14 @@ router.post(
 
       return res.json({
         result: true,
+        _id: userDoc._id,
         username: userDoc.username,
         email: userDoc.email,
         needEmailVerification: true,
         otpTriggered,
         resendAfterSec: 60,
-        revenuecatId: userDoc.revenuecatId
+        revenuecatId: userDoc.revenuecatId,
+        isPremium: userDoc.isPremium,
       });
     } catch (err) {
       // Gestion propre du doublon DB (course condition)
@@ -160,12 +162,14 @@ router.post('/signin', loginLimiter, async (req, res) => {
 
   res.json({
     result: true,
+    _id: user._id,
     token: raw,
     username: user.username,
     role: user.role,
     email: user.email,
     myproducts: user.myproducts,
     revenuecatId: user.revenuecatId,
+    isPremium: user.isPremium || false,
   });
 });
 
@@ -378,6 +382,7 @@ router.post('/email/verify/confirm-otp', async (req, res) => {
 
   return res.json({
     ok: true,
+    _id: u._id,
     token: rawToken,
     username: u.username,
     email: u.email,
@@ -409,7 +414,7 @@ router.post('/google', async (req, res) => {
         email,
         emailVerified: true,
         password: bcrypt.hashSync(uid2(32), 10), // mot de passe aléatoire juste pour remplir le schéma
-        tokenpush
+        tokenpush,
       });
     }
 
@@ -445,6 +450,7 @@ router.post('/google', async (req, res) => {
     res.json({
       result: true,
       token: rawToken,
+      _id: user._id,
       username: user.username,
       email: user.email,
       role: user.role,
@@ -489,10 +495,12 @@ router.post('/force-login', async (req, res) => {
     return res.json({
       result: true,
       token: raw,
+      _id: user._id,
       username: user.username,
       email: user.email,
       myproducts: user.myproducts || [],
       revenuecatId: user.revenuecatId,
+      isPremium: user.isPremium || false,
     });
   } catch (error) {
     console.error('Force login error:', error);
@@ -534,6 +542,7 @@ router.post('/force-login-google', async (req, res) => {
     return res.json({
       result: true,
       token: rawToken,
+      _id: user._id,
       username: user.username,
       email: user.email,
       myproducts: user.myproducts || [],

@@ -5,7 +5,7 @@ const User = require('../models/users')
 const { Expo } = require('expo-server-sdk');
 const expo = new Expo();
 const i18next = require('i18next');
-const { notifyListUpdated } = require("../utils/socketSync");
+const { emitItemUpdated, emitItemDeleted, emitListDeleted, emitListUpdated } = require("../utils/socketSync");
 
 // route pour créé liste de course et la partager
 
@@ -13,12 +13,6 @@ router.post('/create-and-share', async (req, res) => {
   try {
     const { title, items, sharedUsers, canEdit } = req.body;
     const owner = await User.findById(req.user._id);
-    
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('📤 [CREATE-SHARE] Début création');
-    console.log('  User:', owner.username);
-    console.log('  User ID:', owner._id);
-    console.log('  sharedUsers:', sharedUsers);
 
     // ✅ TOUJOURS ajouter le propriétaire avec son username
     const sharedWithCleaned = [{
@@ -33,7 +27,7 @@ router.post('/create-and-share', async (req, res) => {
     // Ajouter les autres utilisateurs
     if (Array.isArray(sharedUsers) && sharedUsers.length > 0) {
       console.log('  🔍 Recherche utilisateurs...');
-      
+
       for (const username of sharedUsers) {
         const user = await User.findOne({
           username: { $regex: new RegExp(`^${username}$`, 'i') },
@@ -86,7 +80,7 @@ router.post('/create-and-share', async (req, res) => {
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     const io = req.app.get("io");
-    notifyListUpdated(io, newList._id);
+    emitListUpdated(io, newList._id);
 
     // 🔔 Notifications
     const sharedUserIds = sharedWithCleaned.map(u => u.userId);
@@ -183,6 +177,49 @@ router.get('/getList', async (req, res) => {
 });
 
 
+// Supprimer un item d’une liste
+router.delete('/deleteItem', async (req, res) => {
+  const { listId, itemId } = req.body;
+  const userId = req.user._id;
+
+  try {
+    const list = await ShoppingList.findOne({
+      _id: listId,
+      $or: [
+        { ownerId: userId },
+        { sharedWith: { $elemMatch: { userId, canEdit: true } } }
+      ]
+    });
+
+    if (!list) {
+      return res.status(403).json({
+        success: false,
+        message: "Pas d’accès à cette liste."
+      });
+    }
+
+    const item = list.items.id(itemId);
+    if (!item) {
+      return res.status(404).json({ success: false, message: "Item introuvable." });
+    }
+
+    item.deleteOne(); // ❗ suppression propre du sous-document
+
+    await list.save();
+
+    // 👇 Émission de l’évènement socket
+    const io = req.app.get("io");
+    emitItemDeleted(io, listId, itemId);
+
+    res.json({ success: true, message: "Item supprimé." });
+
+  } catch (err) {
+    console.error("❌ deleteItem:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 // Modifier le "checked" d’un item dans une liste
 
 router.post('/toggleItem', async (req, res) => {
@@ -199,7 +236,8 @@ router.post('/toggleItem', async (req, res) => {
     await list.save();
 
     const io = req.app.get("io");
-    notifyListUpdated(io, listId);
+
+    emitItemUpdated(io, listId, itemId, checked);
 
     return res.json({ success: true });
   } catch (err) {
@@ -231,8 +269,8 @@ router.delete('/deleteList', async (req, res) => {
     await ShoppingList.deleteOne({ _id: listId });
 
     const io = req.app.get("io");
-    notifyListUpdated(io, listId);
 
+    emitListDeleted(io, listId);
 
     return res.status(200).json({ result: true, message: "La liste a bien été supprimée." });
   } catch (err) {
@@ -243,7 +281,7 @@ router.delete('/deleteList', async (req, res) => {
 
 // route pour effacer toutes les listes de course qui on été partagée
 router.delete('/deleteAllLists', async (req, res) => {
-  const { lists } = req.body; // attend un tableau de listes à supprimer
+  const { lists } = req.body;
   const ownerId = req.user._id;
 
   if (!Array.isArray(lists) || lists.length === 0) {
@@ -251,7 +289,6 @@ router.delete('/deleteAllLists', async (req, res) => {
   }
 
   try {
-    // Trouve toutes les listes que l'utilisateur peut modifier
     const allowedLists = await ShoppingList.find({
       _id: { $in: lists },
       $or: [
@@ -263,16 +300,18 @@ router.delete('/deleteAllLists', async (req, res) => {
     const allowedIds = allowedLists.map(list => list._id.toString());
 
     if (allowedIds.length === 0) {
-      return res.status(403).json({ result: false, message: "Aucune des listes n'est accessible avec vos droits." });
+      return res.status(403).json({ result: false, message: "Aucune des listes n'est accessible." });
     }
 
     await ShoppingList.deleteMany({ _id: { $in: allowedIds } });
 
     const io = req.app.get("io");
-    allowedIds.forEach(id => notifyListUpdated(io, id));
 
+    // 🔥 Important : un event spécifique pour CHAQUE liste supprimée
+    allowedIds.forEach(id => emitListDeleted(io, id));
 
     res.json({ result: true, message: `${allowedIds.length} liste(s) supprimée(s).` });
+
   } catch (err) {
     res.status(500).json({ result: false, error: err.message });
   }

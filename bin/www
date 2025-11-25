@@ -55,7 +55,13 @@ io.on('connection', (socket) => {
     socket.leave(`list-${listId}`);
     console.log(`Socket ${socket.id} a quitté la liste ${listId}`);
   });
-// 5) disconnect
+// 5) 🆕 Leave ALL rooms lists
+  socket.on("leave-all-lists", () => {
+    const rooms = [...socket.rooms].filter(r => r.startsWith("list-"));
+    rooms.forEach(room => socket.leave(room));
+    console.log(`🚪 ${socket.id} quitte toutes les rooms listes`);
+  });
+// 6) disconnect
 //    → Permet de log ou nettoyer si besoin.
   socket.on('disconnect', () => {
     console.log('❌ Utilisateur déconnecté:', socket.id);

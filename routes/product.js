@@ -7,6 +7,7 @@ const Planning = require('../models/planning')
 const fetch = require('node-fetch');
 const { uploadToR2, deleteFromR2 } = require('../services/R2cloudflare');
 const multer = require('multer');
+const { checkPremiumStatus } = require('../middlewares/checkPremium');
 
 // Multer pour lire le fichier en RAM (pas sur disque)
 const upload = multer({
@@ -20,18 +21,22 @@ router.post('/r2/upload', upload.single('photoproduct'), async (req, res) => {/*
 Il sert à analyser la requête HTTP quand elle contient un fichier uploadé (de type multipart/form-data)
 et à rendre ce fichier accessible dans req.file*/
   try {
-     if (!req.user?.isPremium) {
+    // ✅ Vérification Premium avec double-check
+    const user = await User.findById(req.user._id);
+    const isPremium = await checkPremiumStatus(user);
+
+    if (!isPremium) {
       return res.status(403).json({ success: false, error: "Compte non premium — upload R2 désactivé." });
     }
+
     if (!req.file) {
       return res.status(400).json({ success: false, error: "Aucun fichier envoyé" });
     }
 
     const { url, key } = await uploadToR2(req.file.buffer, req.file.originalname, 'products-users');
     console.log("Image uploadée sur R2:", key);
-    const imageUrl = url; // URL publique de l’image
 
-    res.json({ success: true, url: imageUrl, key });
+    res.json({ success: true, url, key });
   } catch (err) {
     console.error("Erreur upload R2:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -77,8 +82,9 @@ router.get('/openfoodfacts/:codebarre', async (req, res) => {
 // Route pour ajouter un nouveau produit dans la collection products ou myproducts.
 router.post('/addproduct', async (req, res) => {
   try {
-    const userId = req.user._id; // Récupérer l'ID de l'utilisateur à partir du token
+    const userId = req.user._id;
     const { codebarre, name, categorie, prix, currency, unit, image, expiration, emplacement, quantite, calorie, magasin } = req.body;
+
     if (!name || name.trim() === '') {
       return res.status(400).json({
         result: false,
@@ -86,7 +92,6 @@ router.post('/addproduct', async (req, res) => {
       });
     }
 
-    // Vérifier que l'utilisateur existe
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({
@@ -95,8 +100,12 @@ router.post('/addproduct', async (req, res) => {
       });
     }
 
+    // ✅ Vérification Premium avec double-check
+    const isPremium = await checkPremiumStatus(user);
+    console.log('📊 Statut Premium:', isPremium);
+
     // Limite pour les utilisateurs non premium
-    if (!user.isPremium && user.myproducts.length >= 30) { // changer la limite de produits permis pour les non-premium
+    if (!isPremium && user.myproducts.length >= 30) {
       return res.status(403).json({
         result: false,
         message: 'fullStockMessage'
@@ -220,7 +229,7 @@ router.put('/myproducts/:productId', async (req, res) => {
     // 🗑️ Si nouvelle image fournie ET ancienne image R2 existe
     if (image && currentProduct.image && currentProduct.image.includes('r2.dev')) {
       console.log("🗑️ Suppression ancienne image backend:", currentProduct.image);
-      
+
       try {
         const oldKey = currentProduct.image.split('/').slice(-2).join('/');
         await deleteFromR2(oldKey);

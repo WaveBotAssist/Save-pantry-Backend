@@ -5,7 +5,7 @@ const User = require('../models/users');
 const Recipes = require('../models/recipe');
 const { uploadToR2, deleteFromR2 } = require('../services/R2cloudflare');
 const multer = require('multer');
-
+const { checkPremiumStatus } = require('../middlewares/checkPremium');
 
 
 // Multer pour lire le fichier en RAM (pas sur disque)
@@ -20,7 +20,7 @@ et à rendre ce fichier accessible dans req.file*/
     if (!req.file) {
       return res.status(400).json({ success: false, error: "Aucun fichier envoyé" });
     }
-   const { url, key } = await uploadToR2(req.file.buffer, req.file.originalname, 'recipes-users');
+    const { url, key } = await uploadToR2(req.file.buffer, req.file.originalname, 'recipes-users');
 
     const imageUrl = url; // URL publique de l’image
 
@@ -223,7 +223,7 @@ router.post('/submit', async (req, res) => {
 
     const userId = req.user._id;
 
-    // 🧩 Validation de base
+    // Validation de base
     if (!image || !titre || !titre.trim() || !categorie || !Array.isArray(ingredients) || !ingredients.length ||
       !Array.isArray(instructions) || !instructions.length) {
       return res.status(400).json({
@@ -232,17 +232,20 @@ router.post('/submit', async (req, res) => {
       });
     }
 
-    // 🧠 Récupère l'utilisateur complet
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ result: false, error: "Utilisateur introuvable." });
     }
 
-    // 🔒 Vérifie le nombre de recettes déjà soumises par cet utilisateur
+    // Compter les recettes
     const recipeCount = await Recipes.countDocuments({ auteur: userId });
-  
-    // ⚙️ Limite pour les utilisateurs non premium
-    if (!user.isPremium && recipeCount >= 10 ) {// changer la limite de recettes permis pour les non-premium
+
+    // ✅ Vérification Premium avec double-check
+    const isPremium = await checkPremiumStatus(user);
+    console.log('📊 Statut Premium:', isPremium);
+
+    // Limite pour les utilisateurs non premium
+    if (!isPremium && recipeCount >= 10) {
       return res.status(403).json({
         result: false,
         message: "Limite atteinte (10 recettes). Passez à la version Premium pour en ajouter davantage.",
@@ -250,7 +253,7 @@ router.post('/submit', async (req, res) => {
       });
     }
 
-    // ✅ Création de la recette (en attente de validation)
+    // Création de la recette
     const newRecipe = new Recipes({
       titre,
       categorie,
@@ -280,7 +283,6 @@ router.post('/submit', async (req, res) => {
     return res.status(500).json({ result: false, error: err.message });
   }
 });
-
 
 
 // route pour retrouver toutes les recettes que l utilisateur a proposé (utiliser dans MySharedRecipesScreen.js)

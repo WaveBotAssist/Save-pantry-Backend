@@ -42,27 +42,38 @@ app.set('io', io);
 io.on('connection', (socket) => {
   console.log('✅ Utilisateur connecté:', socket.id);
 
- // 3) join-list(listId)
-//    → Le client rejoint une "room" spécifique à une liste partagée.
-//    → Ainsi, seuls les utilisateurs concernés reçoivent les mises à jour.
+  // 3) join-list(listId)
+  //    → Le client rejoint une "room" spécifique à une liste partagée.
+  //    → Ainsi, seuls les utilisateurs concernés reçoivent les mises à jour.
   socket.on('join-list', (listId) => {
     socket.join(`list-${listId}`);
     console.log(`Socket ${socket.id} a rejoint la liste ${listId}`);
   });
-// 4) leave-list(listId)
-//    → Le client quitte la room lorsqu'il n'affiche plus la liste.
+  // 4) leave-list(listId)
+  //    → Le client quitte la room lorsqu'il n'affiche plus la liste.
   socket.on('leave-list', (listId) => {
     socket.leave(`list-${listId}`);
     console.log(`Socket ${socket.id} a quitté la liste ${listId}`);
   });
-// 5) 🆕 Leave ALL rooms lists
+  // 5) 🆕 Leave ALL rooms lists
   socket.on("leave-all-lists", () => {
     const rooms = [...socket.rooms].filter(r => r.startsWith("list-"));
     rooms.forEach(room => socket.leave(room));
     console.log(`🚪 ${socket.id} quitte toutes les rooms listes`);
   });
-// 6) disconnect
-//    → Permet de log ou nettoyer si besoin.
+  // ajouté les 2 socket pour le planning
+  socket.on("join-planning", userId => {
+    socket.join(`planning-${userId}`);
+    console.log(`🟢 Socket ${socket.id} joined planning-${userId}`);
+  });
+
+  socket.on("leave-planning", userId => {
+    socket.leave(`planning-${userId}`);
+    console.log(`🔴 Socket ${socket.id} left planning-${userId}`);
+  });
+
+  // 6) disconnect
+  //    → Permet de log ou nettoyer si besoin.
   socket.on('disconnect', () => {
     console.log('❌ Utilisateur déconnecté:', socket.id);
   });

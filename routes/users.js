@@ -15,7 +15,7 @@ const updateProductPrice = require('../modules/updateProductPrice')
 router.post('/sync-premium', checkToken, async (req, res) => {
   try {
     const user = req.user;
-  console.log('ID REVENUECAT',user.revenuecatId)
+
     if (!user.revenuecatId) {
       return res.status(400).json({
         result: false,

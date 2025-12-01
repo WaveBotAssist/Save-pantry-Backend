@@ -1,176 +1,184 @@
-// routes/planning.js
 const express = require('express');
 const router = express.Router();
 const User = require('../models/users');
 const Planning = require('../models/planning');
-// Chargement de i18next pour la gestion des traductions
 const i18next = require('i18next');
-//import de la function pour purger le planning d un utilisateur apres un certain temps
 const { cleanPlanning } = require('../utils/cleanPlanning');
 
+/* ------------------------------------------------------------
+   Utils : convert Mongoose Map -> plain JS object
+------------------------------------------------------------ */
+function convertWeek(week) {
+  return {
+    weekStart: week.weekStart,
+    days: Object.fromEntries(
+      Array.from(week.days.entries()).map(([key, value]) => [
+        key,
+        value.toObject ? value.toObject() : value
+      ])
+    )
+  };
+}
 
-
-// Récupérer le planning de l’utilisateur
+/* ------------------------------------------------------------
+   GET /planning
+------------------------------------------------------------ */
 router.get('/', async (req, res) => {
   try {
     const planning = await Planning.findOne({ userId: req.user._id });
-    res.json({ result: true, planning });
+
+    if (!planning)
+      return res.json({ result: true, planning: { weeks: [] } });
+
+    const cleanWeeks = planning.weeks.map(convertWeek);
+
+    res.json({ result: true, planning: { weeks: cleanWeeks } });
+
   } catch (e) {
     res.status(500).json({ result: false, error: e.message });
   }
 });
 
-
-// Sauvegarder / mettre à jour le planning
+/* ------------------------------------------------------------
+   POST /planning (save) + Socket.IO sync
+------------------------------------------------------------ */
 router.post('/', async (req, res) => {
   try {
     const { weeks } = req.body;
+
     let planning = await Planning.findOne({ userId: req.user._id });
+
     if (!planning) {
       planning = new Planning({ userId: req.user._id, weeks });
     } else {
       planning.weeks = weeks;
     }
 
-    // 🧹 Purge ici
     cleanPlanning(planning, 60);
-
     await planning.save();
+
+    // 🔥 Notify all devices of this user
+    req.app.get('io')
+      .to(`planning-${req.user._id}`)
+      .emit("planning-updated");
+
     res.json({ result: true, planning });
+
   } catch (e) {
     res.status(500).json({ result: false, error: e.message });
   }
 });
 
-
-// Déduire des quantités planifiées du stock de l'utilisateur
-// Body attendu: { items: [{ productId: "<_id du myproduct>", qty: 2 }, ...] }
+/* ------------------------------------------------------------
+   POST /inventory/consume
+------------------------------------------------------------ */
 router.post('/inventory/consume', async (req, res) => {
   try {
     const userId = req.user._id;
     const { items, weekStart, key, consumed, lastKnown } = req.body;
 
-    if (!Array.isArray(items) || items.length === 0) {
+    if (!Array.isArray(items) || items.length === 0)
       return res.status(400).json({ result: false, error: 'items doit être un tableau non vide' });
-    }
 
-    const planning = await Planning.findOne({ userId: req.user._id });//Il cherche Le planning de l’utilisateur (Planning.findOne).
+    const planning = await Planning.findOne({ userId });
     if (!planning) return res.status(404).json({ result: false, error: "Planning not found" });
 
-      const week = planning.weeks.find(w => w.weekStart === weekStart);//La bonne semaine (weekStart).
+    const week = planning.weeks.find(w => w.weekStart === weekStart);
     if (!week) return res.status(404).json({ result: false, error: "Week not found" });
 
-    const day = week.days.get(key);//Le bon jour (days.get(key)).
+    const day = week.days.get(key);
     if (!day) return res.status(404).json({ result: false, error: "Day not found" });
-    
 
-    // ⚠️  Vérifie que le jour n’a pas déjà été consommé
     if (day.consumed !== lastKnown) {
-      return res.status(409).json({
-        result: false,
-        error: "conflictStock"
-      });
+      return res.status(409).json({ result: false, error: "conflictStock" });
     }
-    const user = await User.findById(userId).select('myproducts');
-    if (!user) return res.status(404).json({ result: false, error: 'Utilisateur introuvable' });
 
-    // index des sous-documents par _id (string)
+    const user = await User.findById(userId).select('myproducts');
     const byId = new Map(user.myproducts.map(p => [String(p._id), p]));
 
-  
+    // Validate stock
     for (const it of items) {
-      if (!it?.productId || typeof it.qty !== 'number' || it.qty <= 0) {
-        return res.status(400).json({ result: false, error: 'Chaque item doit avoir productId et qty>0' });
-      }
       const sub = byId.get(String(it.productId));
-      if (!sub) {
-        return res.status(404).json({ result: false, error: `Produit introuvable dans le stock` });
-      }
-      // Vérifie aussi que le stock de l’utilisateur (user.myproducts) contient assez de quantité.
-      if ((sub.quantite ?? 0) < it.qty) {
-        return res.status(409).json({
-          result: false,
-          error: i18next.t('insufficientStock')
-        })
-      }
+      if (!sub)
+        return res.status(404).json({ result: false, error: 'Produit introuvable dans le stock' });
+
+      if ((sub.quantite ?? 0) < it.qty)
+        return res.status(409).json({ result: false, error: i18next.t('insufficientStock') });
     }
 
-    // déduction Si OK → il décrémente les produits dans user.myproducts.
+    // Apply consumption
     for (const it of items) {
       const sub = byId.get(String(it.productId));
       sub.quantite = Math.max(0, (sub.quantite ?? 0) - it.qty);
     }
 
-     // Mise à jour Il marque day.consumed = true.
     day.consumed = consumed;
+
     await planning.save();
     await user.save();
-    return res.json({ result: true, message: 'Stock mis à jour (consommation).' });
-    
+
+    // 🔥 Notify all devices
+    req.app.get('io')
+      .to(`planning-${req.user._id}`)
+      .emit("planning-updated");
+
+    res.json({ result: true, message: 'Stock mis à jour (consommation).' });
+
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ result: false, error: 'Erreur interne.' });
+    res.status(500).json({ result: false, error: 'Erreur interne.' });
   }
 });
 
-
-// Annuler la déduction (récréditer les quantités)
-// Body attendu: { items: [{ productId: "<_id du myproduct>", qty: 2 }, ...] }
+/* ------------------------------------------------------------
+   POST /inventory/undo
+------------------------------------------------------------ */
 router.post('/inventory/undo', async (req, res) => {
   try {
     const userId = req.user._id;
-    const { items, weekStart, key, consumed, lastKnown  } = req.body;
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ result: false, error: 'items doit être un tableau non vide' });
-    }
+    const { items, weekStart, key, consumed, lastKnown } = req.body;
 
-    const planning = await Planning.findOne({ userId: req.user._id });
+    if (!Array.isArray(items) || items.length === 0)
+      return res.status(400).json({ result: false, error: 'items doit être un tableau non vide' });
+
+    const planning = await Planning.findOne({ userId });
     if (!planning) return res.status(404).json({ result: false, error: "Planning not found" });
 
-      const week = planning.weeks.find(w => w.weekStart === weekStart);
+    const week = planning.weeks.find(w => w.weekStart === weekStart);
     if (!week) return res.status(404).json({ result: false, error: "Week not found" });
 
     const day = week.days.get(key);
     if (!day) return res.status(404).json({ result: false, error: "Day not found" });
-    
-    // ⚠️ Vérif de conflit
+
     if (day.consumed !== lastKnown) {
-      return res.status(409).json({
-        result: false,
-        error: "conflictStock"
-      });
+      return res.status(409).json({ result: false, error: "conflictStock" });
     }
 
     const user = await User.findById(userId).select('myproducts');
-    if (!user) return res.status(404).json({ result: false, error: 'Utilisateur introuvable' });
-
     const byId = new Map(user.myproducts.map(p => [String(p._id), p]));
 
-    // validations
+    // Refund quantities
     for (const it of items) {
-      if (!it?.productId || typeof it.qty !== 'number' || it.qty <= 0) {
-        return res.status(400).json({ result: false, error: 'Chaque item doit avoir productId et qty>0' });
-      }
       const sub = byId.get(String(it.productId));
-      if (!sub) {
-        return res.status(404).json({ result: false, error: `Produit introuvable dans le stock` });
-      }
-    }
+      if (!sub)
+        return res.status(404).json({ result: false, error: 'Produit introuvable dans le stock' });
 
-    // récrédit
-    for (const it of items) {
-      const sub = byId.get(String(it.productId));
       sub.quantite = (sub.quantite ?? 0) + it.qty;
     }
 
-     // Mise à jour
     day.consumed = consumed;
+
     await planning.save();
     await user.save();
-    return res.json({ result: true, message: 'Stock rétabli (annulation).' });
+
+    // 🔥 Notify all devices
+    req.app.get('io')
+      .to(`planning-${req.user._id}`)
+      .emit("planning-updated");
+
+    res.json({ result: true, message: 'Stock rétabli (annulation).' });
+
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ result: false, error: 'Erreur interne.' });
+    res.status(500).json({ result: false, error: 'Erreur interne.' });
   }
 });
 

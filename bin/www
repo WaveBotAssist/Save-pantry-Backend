@@ -27,7 +27,7 @@ var server = http.createServer(app);
  */
 const io = new Server(server, {
   cors: {
-    origin: "https://lively-marin-savepantry-9e49e14e.koyeb.app/", // À adapter selon ton front-end pour une version web de save pantry
+    origin: "*",           // 📱 Mobile compatible
     methods: ["GET", "POST"]
   }
 });

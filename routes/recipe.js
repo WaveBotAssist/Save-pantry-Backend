@@ -9,7 +9,11 @@ const { checkPremiumStatus } = require('../middlewares/checkPremium');
 
 
 // Multer pour lire le fichier en RAM (pas sur disque)
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 } // 5 Mo max
+});
+
 
 //ci-dessous les deux routes pour upload ou remove une image de R2 cloudflare
 // ---- UPLOAD ROUTE ----
@@ -210,7 +214,6 @@ router.post('/myrecipes', async (req, res) => {
     return res.status(500).json({ result: false, error: err.message });
   }
 });
-
 
 
 // Route pour soumettre une recette communautaire

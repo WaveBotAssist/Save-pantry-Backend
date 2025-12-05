@@ -93,3 +93,4 @@ app.use('/favorites',     checkToken, slideSession, favoritesRouter);
 app.use('/planning',      checkToken, slideSession, planning);
 
 module.exports = app;
+ 

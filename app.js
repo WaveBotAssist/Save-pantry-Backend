@@ -41,12 +41,13 @@ const favoritesRouter = require('./routes/favoritesRecipes');
 const auth = require('./routes/auth');
 const planning = require('./routes/planning')
 
+
+var app = express();
 // Middleware pour logger chaque requête
 app.use((req, res, next) => {
   console.log(`📩 ${req.method} ${req.url}`);
   next();
 });
-var app = express();
 app.set("trust proxy", 1);
 //important ajout du module cors pour communication frontend a backend
 const cors = require('cors');

@@ -2,14 +2,10 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const Session = require('../models/session');
 const User = require('../models/users');
-const NodeCache = require('node-cache'); // Cache léger en RAM pour éviter surcharge MongoDB
 
 // Fonction utilitaire : crée un hash SHA256 pour fingerprint du token
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
 
-// 🗄️ Cache en mémoire : conserve la valeur premium pendant 10 minutes
-// stdTTL = durée du cache ; checkperiod = fréquence d'expiration
-const premiumCache = new NodeCache({ stdTTL: 600, checkperiod: 120 });
 
 module.exports = async function checkToken(req, res, next) {
   try {
@@ -74,22 +70,7 @@ module.exports = async function checkToken(req, res, next) {
       return res.status(401).json({ error: 'User not found' });
     }
 
-    // ---------------------------------------------------------
-    // 6️⃣ OPTIMISATION BDD : CACHE PREMIUM
-    // Objectif : éviter un accès BDD à chaque requête
-    //
-    // Si la valeur premium est en cache → on l'utilise
-    // Sinon → on la stocke dans le cache pour 10 minutes
-    // ---------------------------------------------------------
-    const cachedPremium = premiumCache.get(user._id.toString());
 
-    if (cachedPremium !== undefined) {
-      // On utilise la valeur premium du cache
-      user.isPremium = cachedPremium;
-    } else {
-      // On stocke la valeur dans le cache
-      premiumCache.set(user._id.toString(), user.isPremium);
-    }
 
     // ---------------------------------------------------------
     // 7️⃣ RENOUVELLEMENT AUTO DE LA SESSION (sliding expiration)

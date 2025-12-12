@@ -15,7 +15,10 @@ const Session = require('../models/session');
 const checkToken = require('../middlewares/checkToken');
 
 // Antispam: 3 requêtes / 15 min par IP
-const forgotLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5 });
+const forgotLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 3, message: { 
+  result: false
+},
+statusCode: 200 });
 const requestLimiter = rateLimit({ windowMs: 60_000, max: 5 }); // basique
 const loginLimiter = rateLimit({ windowMs: 60 * 1000, max: 10 });
 
@@ -216,17 +219,18 @@ router.post('/forgot-password', forgotLimiter, async (req, res) => {
     const resetUrl = url.toString();
 
     //utilisation de la fonction pour envoyer le mail dans services/mailer.js
-    await sendPasswordResetEmail({
+     await sendPasswordResetEmail({
       toEmail: user.email,
       toName: user.username || '',
       resetUrl,
     });
     res.json({ result: true, message: "Un email de réinitialisation a été envoyé." })
-
+  
   } catch (e) {
     // On ne révèle rien au client, mais on log pour debug serveur
     console.error('Mailjet API error (forgot):', e?.message || e);
     // On renvoie quand même la réponse générique
+    res.json({ result: false, message : 'Veuillez attendre 15 minutes avant de reessayer'})
   }
 
 });

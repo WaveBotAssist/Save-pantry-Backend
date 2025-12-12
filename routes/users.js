@@ -104,13 +104,15 @@ router.post('/sync-premium', checkToken, async (req, res) => {
 
     // ✅ Appel avec retry automatique (5 tentatives, 2.5s entre chaque)
     // Total : ~12.5 secondes max de tentatives
-    const isPremiumRevenueCat = await checkPremiumStatusWithRetry(user.revenuecatId, 5, 2500);
+    const isPremiumRevenueCat = await checkPremiumStatusWithRetry(user.revenuecatId, 1, 0);
 
     if (isPremiumRevenueCat === null) {
-      console.error('❌ Impossible de vérifier le statut après plusieurs tentatives');
-      return res.status(500).json({
-        result: false,
-        message: 'Erreur communication avec RevenueCat'
+      console.log('⚠️ Pas de réponse RevenueCat, on retourne le statut DB');
+      return res.json({
+        result: true,
+        isPremium: user.isPremium,  // ⬅️ Statut actuel de la BDD
+        updated: false,
+        fromCache: true
       });
     }
 

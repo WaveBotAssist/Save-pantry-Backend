@@ -71,6 +71,7 @@ module.exports = async function checkToken(req, res, next) {
     session.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     await session.save();
 
+    
     // ---------------------------------------------------------
     // 7️⃣ GESTION INTELLIGENTE DES SESSIONS MULTIPLES
     // Avec protection contre la suppression pendant l'achat

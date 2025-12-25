@@ -36,6 +36,12 @@ var planning = require('./routes/planning');
 // INITIALISATION DE EXPRESS
 var app = express();
 
+app.use((req, res, next) => {
+  console.log('➡️', req.method, req.originalUrl);
+  console.log('📦 Content-Type:', req.headers['content-type']);
+  next();
+});
+
 // 🔐 Important pour les reverse proxies type Nginx
 app.set("trust proxy", 1);
 

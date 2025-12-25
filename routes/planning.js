@@ -3,7 +3,6 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/users');
 const Planning = require('../models/planning');
-const i18next = require('i18next');
 const { cleanPlanning } = require('../utils/cleanPlanning');
 
 

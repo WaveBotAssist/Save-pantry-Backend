@@ -15,10 +15,12 @@ const Session = require('../models/session');
 const checkToken = require('../middlewares/checkToken');
 
 // Antispam: 3 requêtes / 15 min par IP
-const forgotLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 3, message: { 
-  result: false
-},
-statusCode: 200 });
+const forgotLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 3, message: {
+    result: false
+  },
+  statusCode: 200
+});
 const requestLimiter = rateLimit({ windowMs: 60_000, max: 5 }); // basique
 const loginLimiter = rateLimit({ windowMs: 60 * 1000, max: 10 });
 
@@ -126,7 +128,13 @@ router.post(
 
 // route pour ce connecter dans l app
 router.post('/signin', loginLimiter, async (req, res) => {
-  const { email, password } = req.body || {};
+  const { email, password, deviceId } = req.body || {};
+  if (!deviceId) {
+    return res.status(400).json({
+      result: false,
+      error: 'Missing deviceId'
+    });
+  }
   const user = await User.findOne({ email }).select('+password');
   if (!user || !(await bcrypt.compare(password, user.password))) {
     return res.status(400).json({ result: false, error: 'Invalid credentials' });
@@ -140,10 +148,12 @@ router.post('/signin', loginLimiter, async (req, res) => {
     const activeSession = await Session.findOne({
       userId: user._id,
       revokedAt: null,
-      expiresAt: { $gt: new Date() }
+      expiresAt: { $gt: new Date() },
+      deviceId: { $ne: deviceId },
     });
 
-    if (activeSession) {
+    // ❗ vraie double connexion uniquement si device différent
+    if (activeSession && activeSession.deviceId !== req.body.deviceId) {
       return res.status(403).json({
         result: false,
         reason: 'multiple_session',
@@ -160,7 +170,8 @@ router.post('/signin', loginLimiter, async (req, res) => {
     tokenHash: await bcrypt.hash(raw, 10),
     tokenFingerprint: sha256(raw),
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    device: req.headers['user-agent'] || 'mobile'
+    device: req.headers['user-agent'] || 'mobile',
+    deviceId
   });
 
   res.json({
@@ -219,18 +230,18 @@ router.post('/forgot-password', forgotLimiter, async (req, res) => {
     const resetUrl = url.toString();
 
     //utilisation de la fonction pour envoyer le mail dans services/mailer.js
-     await sendPasswordResetEmail({
+    await sendPasswordResetEmail({
       toEmail: user.email,
       toName: user.username || '',
       resetUrl,
     });
     res.json({ result: true, message: "Un email de réinitialisation a été envoyé." })
-  
+
   } catch (e) {
     // On ne révèle rien au client, mais on log pour debug serveur
     console.error('Mailjet API error (forgot):', e?.message || e);
     // On renvoie quand même la réponse générique
-    res.json({ result: false, message : 'Veuillez attendre 15 minutes avant de reessayer'})
+    res.json({ result: false, message: 'Veuillez attendre 15 minutes avant de reessayer' })
   }
 
 });
@@ -401,7 +412,13 @@ router.post('/email/verify/confirm-otp', async (req, res) => {
 // ajouter pour connecter nouveau utilisateur avec google
 router.post('/google', async (req, res) => {
   try {
-    const { idToken, tokenpush } = req.body;
+    const { idToken, deviceId } = req.body;
+    if (!deviceId) {
+      return res.status(400).json({
+        result: false,
+        error: 'Missing deviceId'
+      });
+    }
     if (!idToken) return res.status(400).json({ result: false, error: 'Missing idToken' });
 
     // 1️⃣ Vérifie le token via Firebase Admin
@@ -418,7 +435,6 @@ router.post('/google', async (req, res) => {
         email,
         emailVerified: true,
         password: bcrypt.hashSync(uid2(32), 10), // mot de passe aléatoire juste pour remplir le schéma
-        tokenpush,
       });
     }
 
@@ -427,10 +443,12 @@ router.post('/google', async (req, res) => {
       const activeSession = await Session.findOne({
         userId: user._id,
         revokedAt: null,
-        expiresAt: { $gt: new Date() }
+        expiresAt: { $gt: new Date() },
+        deviceId: { $ne: deviceId },
       });
 
-      if (activeSession) {
+      // ❗ vraie double connexion uniquement si device différent
+      if (activeSession && activeSession.deviceId !== req.body.deviceId) {
         return res.status(403).json({
           result: false,
           reason: 'multiple_session',
@@ -440,6 +458,7 @@ router.post('/google', async (req, res) => {
       }
     }
 
+
     // 3️⃣ Crée une session (comme ton /signin)
     const rawToken = uid2(64);
     await Session.create({
@@ -448,6 +467,7 @@ router.post('/google', async (req, res) => {
       tokenFingerprint: sha256(rawToken),
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       device: req.headers['user-agent'] || 'mobile',
+      deviceId
     });
 
     // 4️⃣ Retourne la réponse standard
@@ -473,7 +493,13 @@ router.post('/google', async (req, res) => {
 // 🔁 Forcer la connexion en supprimant les anciennes sessions
 router.post('/force-login', async (req, res) => {
   try {
-    const { email, password } = req.body || {};
+    const { email, password, deviceId } = req.body || {};
+    if (!deviceId) {
+      return res.status(400).json({
+        result: false,
+        error: 'Missing deviceId'
+      });
+    }
     if (!email || !password) {
       return res.status(400).json({ result: false, error: 'Missing credentials' });
     }
@@ -483,8 +509,10 @@ router.post('/force-login', async (req, res) => {
       return res.status(400).json({ result: false, error: 'Invalid credentials' });
     }
 
-    // 🚫 Supprime toutes les anciennes sessions
-    await Session.deleteMany({ userId: user._id });
+    // Supprime les anciennes sessions du même appareil (réinstall / relog)
+    await Session.deleteMany({
+      userId: user._id,
+    });
 
     // ✅ Crée une nouvelle session
     const raw = uid2(64);
@@ -494,6 +522,7 @@ router.post('/force-login', async (req, res) => {
       tokenFingerprint: sha256(raw),
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       device: req.headers['user-agent'] || 'mobile',
+      deviceId
     });
 
     return res.json({
@@ -516,7 +545,13 @@ router.post('/force-login', async (req, res) => {
 // 🔁 Forcer la connexion Google (supprime les anciennes sessions)
 router.post('/force-login-google', async (req, res) => {
   try {
-    const { idToken } = req.body;
+    const { idToken, deviceId } = req.body;
+    if (!deviceId) {
+      return res.status(400).json({
+        result: false,
+        error: 'Missing deviceId'
+      });
+    }
     if (!idToken) return res.status(400).json({ result: false, error: 'Missing idToken' });
 
     // ✅ Vérifie le token Google via Firebase Admin
@@ -530,8 +565,11 @@ router.post('/force-login-google', async (req, res) => {
       return res.status(404).json({ result: false, error: 'User not found' });
     }
 
-    // 🧹 Supprime toutes les anciennes sessions
-    await Session.deleteMany({ userId: user._id });
+    // Supprime les anciennes sessions du même appareil (réinstall / relog)
+    await Session.deleteMany({
+      userId: user._id,
+    });
+
 
     // 🔐 Crée une nouvelle session
     const rawToken = uid2(64);
@@ -541,6 +579,7 @@ router.post('/force-login-google', async (req, res) => {
       tokenFingerprint: sha256(rawToken),
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       device: req.headers['user-agent'] || 'mobile',
+      deviceId
     });
 
     return res.json({
@@ -558,5 +597,26 @@ router.post('/force-login-google', async (req, res) => {
   }
 });
 
+ /* 🔐 Valide un token existant
+ * 
+ * Utilisé au démarrage de l'app pour vérifier
+ * que le token Redux Persist est toujours valide
+ */
+router.get('/validate-token', checkToken, async (req, res) => {
+  try {
+    // Si checkToken a réussi, le token est valide
+    // On renvoie juste un 200 OK
+    res.json({
+      result: true,
+      message: 'Token valid'
+    });
+  } catch (error) {
+    console.error('❌ Erreur validation token:', error);
+    res.status(401).json({
+      result: false,
+      error: 'Invalid token'
+    });
+  }
+});
 
 module.exports = router;

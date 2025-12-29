@@ -8,12 +8,11 @@ const i18next = require('i18next');
 const { emitItemUpdated, emitItemDeleted, emitListDeleted, emitListUpdated } = require("../utils/socketSync");
 
 // route pour créé liste de course et la partager
-
 router.post('/create-and-share', async (req, res) => {
   try {
     const { title, items, sharedUsers, canEdit } = req.body;
     const owner = await User.findById(req.user._id);
-
+ console.log('isPremium',owner.isPremium)
     // ✅ TOUJOURS ajouter le propriétaire avec son username
     const sharedWithCleaned = [{
       userId: owner._id,
@@ -23,6 +22,8 @@ router.post('/create-and-share', async (req, res) => {
     }];
 
     console.log('  👤 Propriétaire ajouté');
+
+    const usersNotFound = [];
 
     // Ajouter les autres utilisateurs
     if (Array.isArray(sharedUsers) && sharedUsers.length > 0) {
@@ -34,8 +35,9 @@ router.post('/create-and-share', async (req, res) => {
         });
 
         if (!user) {
-          console.warn(`  ⚠️ Utilisateur "${username}" non trouvé`);
-          continue;
+          usersNotFound.push(username);
+          console.warn(`⚠️ Utilisateur "${username}" non trouvé`);
+          continue; // on passe au suivant
         }
 
         if (user._id.toString() === owner._id.toString()) {
@@ -61,6 +63,15 @@ router.post('/create-and-share', async (req, res) => {
         });
       }
     }
+    // utilisation du tableau usersNotFound pour dire a l user que ces utilisateur taper n existe pas.
+    if (usersNotFound.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Certains utilisateurs sont introuvables",
+        usersNotFound, // 👈 tableau clair
+      });
+    }
+
 
     console.log('  📋 sharedWithCleaned:', sharedWithCleaned.length, 'personne(s)');
     sharedWithCleaned.forEach(sw => {
@@ -77,13 +88,13 @@ router.post('/create-and-share', async (req, res) => {
     });
 
     console.log('  ✅ Liste créée !');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     const io = req.app.get("io");
     await emitListUpdated(io, newList._id);
 
     // 🔔 Notifications
     const sharedUserIds = sharedWithCleaned.map(u => u.userId);
+
     const sharedUsersData = await User.find({
       _id: { $in: sharedUserIds }
     }).select('tokenpush notificationSettings language username');
@@ -96,6 +107,9 @@ router.post('/create-and-share', async (req, res) => {
 
     for (const user of usersWithNotificationsEnabled) {
       if (!user.tokenpush) continue;
+
+      // ⛔️ AJOUTER NE PAS notifier le propriétaire
+      if (user._id.equals(owner._id)) continue;
 
       const lang = user.language || 'fr';
       i18next.changeLanguage(lang);

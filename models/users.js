@@ -29,7 +29,6 @@ const userSchema = mongoose.Schema({
     isPremium: { type: Boolean, default: false },// statut premium
     notificationsEnabled: Boolean,
     tokenpush: String,
-    accountId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },// On crée un identifiant unique utilisé pour envoyer des notifications push a ceux qui on cet id (premium)
     //ajout du choix de la langue de l utilisateur
     language: { type: String, enum: ['fr', 'en'], default: 'fr' },
     // role de l'utilisateur

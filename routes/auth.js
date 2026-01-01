@@ -342,12 +342,19 @@ router.post('/email/verify/request-otp', requestLimiter, async (req, res) => {
 
 //Endpoint : confirmation (confirm)
 router.post('/email/verify/confirm-otp', async (req, res) => {
-  const { email, code } = req.body || {};
+  const { email, code, deviceId } = req.body || {};
   if (!email || !code) return res.status(400).json({ ok: false });
-
+  if (!deviceId) {
+    return res.status(400).json({
+      result: false,
+      error: 'Missing deviceId'
+    });
+  }
+ console.log('DEVICEIDBACK',deviceId)
   const user = await User.findOne({ email });
   const generic = { ok: false, error: 'Code invalide ou expiré' };
   if (!user || user.emailVerified) return res.status(400).json(generic);
+
 
   const rec = await EmailOtp.findOne({
     userId: user._id,
@@ -390,6 +397,7 @@ router.post('/email/verify/confirm-otp', async (req, res) => {
     tokenFingerprint,
     expiresAt,
     device: req.get('User-Agent') || 'mobile',
+    deviceId,
   });
 
   // Tu peux aussi peupler ce dont le front a besoin au premier affichage
@@ -597,11 +605,11 @@ router.post('/force-login-google', async (req, res) => {
   }
 });
 
- /* 🔐 Valide un token existant
- * 
- * Utilisé au démarrage de l'app pour vérifier
- * que le token Redux Persist est toujours valide
- */
+/* 🔐 Valide un token existant
+* 
+* Utilisé au démarrage de l'app pour vérifier
+* que le token Redux Persist est toujours valide
+*/
 router.get('/validate-token', checkToken, async (req, res) => {
   try {
     // Si checkToken a réussi, le token est valide

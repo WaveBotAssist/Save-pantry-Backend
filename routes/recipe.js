@@ -49,9 +49,9 @@ router.delete('/r2/delete/:key', async (req, res) => {
 
 
 //route pour recuperer les alliments de l'user et retourner des recettes qui corresponde a leur produits
+// Accessible en mode anonyme (req.user = null) : retourne toutes les recettes sans filtrage par stock
 router.post('/myrecipes', async (req, res) => {
   try {
-    const owner = req.user._id;
     const { manquantMax, categorie, tempsMax, search } = req.body;
     // choisir la langue des recettes dans la requête, sinon par défaut en français
     const lang = req.query.lang || 'fr'; // par défaut, français
@@ -60,15 +60,7 @@ router.post('/myrecipes', async (req, res) => {
     const limit = parseInt(req.query.limit) || 30;
     const skip = (page - 1) * limit;
 
-    if (!owner)
-      return res.status(400).json({ result: false, error: "Token manquant" });
-
-    const user = await User.findOne({ _id: owner }, { myproducts: 1 });
-
-    if (!user)
-      return res.status(404).json({ result: false, error: "Utilisateur introuvable" });
-
-    // 🔧 Utilitaires
+    // 🔧 Utilitaires (utilisés avec ou sans compte)
     const motsAExclure = new Set([
       "un", "une", "des", "le", "la", "les", "du", "de", "d", "à", "avec", "et",
       "au", "en", "quelques", "peu", "pour", "par", "sur", "dans", "g", "kg",
@@ -83,9 +75,14 @@ router.post('/myrecipes', async (req, res) => {
         : mot;
     };
 
-    // 🔍 Extraction du stock utilisateur
-    const ingredientsDispo = user.myproducts.flatMap(p => {
-      // a) Normaliser + retirer accents, œ, mettre en minuscules
+    // 🔍 Extraction du stock utilisateur — vide en mode anonyme (req.user = null)
+    let ingredientsDispo = [];
+
+    if (req.user) {
+      const user = await User.findOne({ _id: req.user._id }, { myproducts: 1 });
+      if (!user)
+        return res.status(404).json({ result: false, error: "Utilisateur introuvable" });
+
       const normalize = str =>
         str
           .normalize("NFD")
@@ -93,19 +90,18 @@ router.post('/myrecipes', async (req, res) => {
           .replace(/œ/g, "oe")
           .toLowerCase();
 
-      // b) Extrait tous les mots utiles sans chiffres, sans ponctuation
       const extraireMotsUtiles = texte =>
         normalize(texte)
           .split(/\s+/)
           .filter(mot =>
             mot.length > 2 &&
             !motsAExclure.has(mot) &&
-            !/\d/.test(mot)             // retire tout token contenant un chiffre
+            !/\d/.test(mot)
           )
-          .map(singulariser);            // passe au singulier
+          .map(singulariser);
 
-      return extraireMotsUtiles(p.name);
-    });
+      ingredientsDispo = user.myproducts.flatMap(p => extraireMotsUtiles(p.name));
+    }
 
 
     // 1. Construire dynamiquement le filtre Mongo
@@ -137,7 +133,8 @@ router.post('/myrecipes', async (req, res) => {
       status: 1,
     })
 
-    const maxManquants = parseInt(manquantMax) || 0;
+    // En mode anonyme, on ignore le filtre d'ingrédients manquants → toutes les recettes sont visibles
+    const maxManquants = req.user ? (parseInt(manquantMax) || 0) : Infinity;
     const maxTemps = parseInt(tempsMax) || null;
 
 

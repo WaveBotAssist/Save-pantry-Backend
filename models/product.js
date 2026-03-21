@@ -9,7 +9,8 @@ const productSchema = mongoose.Schema({
     unit: String,
     image: String,
     calorie: String,
-    codebarre: String 
+    codebarre: String,
+    nutriments: { type: Object, default: null }, // Données nutritionnelles OpenFoodFacts (pour 100g)
   },{timeStamps: true});
 
 const Product = mongoose.model('Product', productSchema);

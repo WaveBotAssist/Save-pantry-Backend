@@ -47,5 +47,4 @@ router.put('/notificationsettings', async (req, res) => {
 });
 
 
-
 module.exports = router;

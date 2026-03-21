@@ -1,5 +1,6 @@
 require('dotenv').config();
 require('./models/connection');
+require('./services/ApiGemini')
 
 var express = require('express');
 var path = require('path');
@@ -14,6 +15,7 @@ const middleware = require('i18next-http-middleware');
 // Middlewares custom
 const checkToken = require('./middlewares/checkToken');
 const slideSession = require('./middlewares/slideSession');
+const optionalAuth = require('./middlewares/optionalAuth');
 
 // Cron premium
 const { startPremiumSyncJob } = require('./utils/premiumSync');
@@ -31,7 +33,8 @@ var shoppinglistsRouter = require('./routes/shoppinglists');
 var recipeRouter = require('./routes/recipe');
 var favoritesRouter = require('./routes/favoritesRecipes');
 var auth = require('./routes/auth');
-var planning = require('./routes/planning');
+var planningRouter = require('./routes/planning');
+const scannerRouter = require('./routes/scanner')
 
 // INITIALISATION DE EXPRESS
 var app = express();
@@ -94,9 +97,10 @@ app.use('/users', usersRouter);
 app.use('/product',       checkToken, slideSession, productRouter);
 app.use('/notifications', checkToken, slideSession, notifications);
 app.use('/shoppinglists', checkToken, slideSession, shoppinglistsRouter);
-app.use('/recipe',        checkToken, slideSession, recipeRouter);
+app.use('/recipe',        optionalAuth, slideSession, recipeRouter);
 app.use('/favorites',     checkToken, slideSession, favoritesRouter);
-app.use('/planning',      checkToken, slideSession, planning);
+app.use('/planning',      checkToken, slideSession, planningRouter);
+app.use('/scanner', scannerRouter)
 
 module.exports = app;
  

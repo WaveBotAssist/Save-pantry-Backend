@@ -30,6 +30,7 @@ async function requestEmailOtpFor(
     { $set: { usedAt: now } }
   );
 
+  //fonction génère un code 6 chiffres
   const code = genCode();
 
   await EmailOtp.create({

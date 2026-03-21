@@ -83,7 +83,7 @@ router.get('/openfoodfacts/:codebarre', async (req, res) => {
 router.post('/addproduct', async (req, res) => {
   try {
     const userId = req.user._id;
-    const { codebarre, name, categorie, prix, currency, unit, image, expiration, emplacement, quantite, calorie, magasin } = req.body;
+    const { codebarre, name, categorie, prix, currency, unit, image, expiration, emplacement, quantite, calorie, magasin, nutriments, isMigration } = req.body;
 
     if (!name || name.trim() === '') {
       return res.status(400).json({
@@ -104,8 +104,8 @@ router.post('/addproduct', async (req, res) => {
     const isPremium = await checkPremiumStatus(user);
     console.log('📊 Statut Premium:', isPremium);
 
-    // Limite pour les utilisateurs non premium
-    if (!isPremium && user.myproducts.length >= 30) {
+    // Limite pour les utilisateurs non premium (ignorée lors de la migration anonyme)
+    if (!isMigration && !isPremium && user.myproducts.length >= 50) {
       return res.status(403).json({
         result: false,
         message: 'fullStockMessage'
@@ -133,12 +133,15 @@ router.post('/addproduct', async (req, res) => {
         currency,
         calorie,
         unit,
+        nutriments: nutriments || null,
       });
 
       const data = await user.save();
+      const approachingLimit = !isMigration && !isPremium && data.myproducts.length === 40;
       return res.json({
         result: true,
-        message: "Produit ajouté dans l'inventaire de l'utilisateur (sans code-barres).",
+        message: approachingLimit ? 'approachingLimit' : "Produit ajouté dans l'inventaire de l'utilisateur (sans code-barres).",
+        warning: approachingLimit ? 'approachingLimit' : null,
         data: data
       });
     }
@@ -185,12 +188,15 @@ router.post('/addproduct', async (req, res) => {
       currency,
       unit,
       calorie,
+      nutriments: nutriments || null,
     });
 
     const data = await user.save();
+    const approachingLimit = !isMigration && !isPremium && data.myproducts.length === 40;
     return res.json({
       result: true,
-      message: "Produit ajouté avec succès dans l'inventaire de l'utilisateur.",
+      message: approachingLimit ? 'approachingLimit' : "Produit ajouté avec succès dans l'inventaire de l'utilisateur.",
+      warning: approachingLimit ? 'approachingLimit' : null,
       data: data,
     });
   } catch (error) {

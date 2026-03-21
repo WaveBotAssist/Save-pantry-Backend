@@ -16,6 +16,7 @@ const myproductsSchema = mongoose.Schema({
     currency: String,
     unit: String,
     calorie: String,
+    nutriments: { type: Object, default: null }, // Données nutritionnelles OpenFoodFacts (pour 100g)
     updatedAt: { type: Date, default: Date.now } // Date de la dernière mise à jour
 })
 

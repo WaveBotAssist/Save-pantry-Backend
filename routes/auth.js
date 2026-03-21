@@ -350,7 +350,7 @@ router.post('/email/verify/confirm-otp', async (req, res) => {
       error: 'Missing deviceId'
     });
   }
- console.log('DEVICEIDBACK',deviceId)
+
   const user = await User.findOne({ email });
   const generic = { ok: false, error: 'Code invalide ou expiré' };
   if (!user || user.emailVerified) return res.status(400).json(generic);

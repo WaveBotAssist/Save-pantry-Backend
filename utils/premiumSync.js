@@ -2,6 +2,7 @@
 const cron = require('node-cron');
 const User = require('../models/users');
 
+
 function startPremiumSyncJob() {
   // 🕐 Tous les jours à 3h du matin
   cron.schedule('0 3 * * *', async () => {
@@ -20,7 +21,7 @@ function startPremiumSyncJob() {
             `https://api.revenuecat.com/v1/subscribers/${user.revenuecatId}`,
             {
               headers: {
-                'Authorization': `Bearer ${process.env.REVENUECAT_API_KEY}`,
+                'Authorization': `Bearer ${process.env.REVENUECAT_SECRET_KEY}`,
                 'Content-Type': 'application/json'
               }
             }

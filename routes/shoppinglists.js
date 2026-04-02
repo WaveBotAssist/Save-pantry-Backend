@@ -235,6 +235,32 @@ router.delete('/deleteItem', async (req, res) => {
 
 // Modifier le "checked" d’un item dans une liste
 
+/**
+ * Met à jour la quantité d'un article dans une liste partagée.
+ * Broadcast la liste complète mise à jour via Socket.IO.
+ */
+router.post('/updateItemQuantity', async (req, res) => {
+  const { listId, itemId, quantity } = req.body;
+
+  try {
+    const list = await ShoppingList.findById(listId);
+    if (!list) return res.status(404).json({ error: "Liste introuvable" });
+
+    const item = list.items.id(itemId);
+    if (!item) return res.status(404).json({ error: "Item introuvable" });
+
+    item.quantity = String(Math.max(1, parseInt(quantity) || 1));
+    await list.save();
+
+    const io = req.app.get("io");
+    await emitItemUpdated(io, listId, itemId, item.checked);
+
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/toggleItem', async (req, res) => {
   const { listId, itemId, checked } = req.body;
 

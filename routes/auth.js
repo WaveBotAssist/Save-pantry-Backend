@@ -616,7 +616,7 @@ router.get('/validate-token', checkToken, async (req, res) => {
     // On renvoie juste un 200 OK
     res.json({
       result: true,
-      message: 'Token valid'
+      isPremium: req.user.isPremium,
     });
   } catch (error) {
     console.error('❌ Erreur validation token:', error);

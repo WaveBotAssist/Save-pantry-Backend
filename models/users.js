@@ -27,7 +27,7 @@ const userSchema = mongoose.Schema({
     emailVerified: { type: Boolean, default: false }, // status de vérification
     password: { type: String, required: true, select: false },
     revenuecatId: { type: String, unique: true },// identifiant unique pour RevenueCat
-    isPremium: { type: Boolean, default: false },// statut premium
+    isPremium: { type: Boolean, default: false }, // statut premium
     notificationsEnabled: Boolean,
     tokenpush: String,
     //ajout du choix de la langue de l utilisateur

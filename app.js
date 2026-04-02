@@ -100,7 +100,7 @@ app.use('/shoppinglists', checkToken, slideSession, shoppinglistsRouter);
 app.use('/recipe',        optionalAuth, slideSession, recipeRouter);
 app.use('/favorites',     checkToken, slideSession, favoritesRouter);
 app.use('/planning',      checkToken, slideSession, planningRouter);
-app.use('/scanner', scannerRouter)
+app.use('/scanner', optionalAuth, slideSession, scannerRouter)
 
 module.exports = app;
  

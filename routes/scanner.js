@@ -107,7 +107,7 @@ router.get('/quota', quotaRateLimit, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post(
   '/scan-receipt',
-  // Protection anti-abus par IP (optionalAuth + slideSession sont dans app.js)
+  scanRateLimit,// Protection anti-abus par IP (optionalAuth + slideSession sont dans app.js)
   async (req, res) => {
     try {
       // ───────────────────────────────────────────────────────────────────────
@@ -149,21 +149,24 @@ router.post(
         ? { userId: String(req.user._id) }
         : { deviceId, userId: null };
 
+      // Hoisted pour pouvoir calculer scansUsedAfter sans requête DB supplémentaire à l'étape 7.
+      let quotaDoc = null;
+
       if (!isPremium) {
         // Cherche ou crée le document quota pour ce compte (ou cet appareil si anonyme)
         // upsert: true → crée le document s'il n'existe pas encore
-        const quota = await ScannerQuota.findOneAndUpdate(
+        quotaDoc = await ScannerQuota.findOneAndUpdate(
           quotaFilter,
           { $setOnInsert: { ...quotaFilter, scanCount: 0 } },
           { upsert: true, new: true }
         );
 
-        if (quota.scanCount >= FREE_SCAN_LIMIT) {
+        if (quotaDoc.scanCount >= FREE_SCAN_LIMIT) {
           return res.status(403).json({
             result: false,
             code: 'QUOTA_EXCEEDED',
             message: `Tu as utilisé tes ${FREE_SCAN_LIMIT} scans gratuits. Passe en Premium pour scanner sans limite.`,
-            scansUsed: quota.scanCount,
+            scansUsed: quotaDoc.scanCount,
             scansLimit: FREE_SCAN_LIMIT,
           });
         }
@@ -217,7 +220,7 @@ router.post(
         }
         return acc;
       }, new Map());
-      
+
       // ───────────────────────────────────────────────────────────────────────
       // ÉTAPE 5 : Enrichissement des produits avec la date d'expiration
       // Chaque produit reçoit une date approximative basée sur sa catégorie.
@@ -250,10 +253,9 @@ router.post(
       // ÉTAPE 7 : Réponse au frontend
       // ───────────────────────────────────────────────────────────────────────
 
-      // Calcul des scans restants pour affichage dans l'UI
-      const quota = isPremium
-        ? null
-        : await ScannerQuota.findOne(quotaFilter).select('scanCount');
+      // scansUsed après incrément = valeur avant + 1, calculée localement
+      // pour éviter une requête DB supplémentaire.
+      const scansUsedAfter = (quotaDoc?.scanCount ?? 0) + 1;
 
       return res.status(200).json({
         result: true,
@@ -266,9 +268,9 @@ router.post(
           ? { isPremium: true }
           : {
             isPremium: false,
-            scansUsed: quota?.scanCount ?? FREE_SCAN_LIMIT,
+            scansUsed: scansUsedAfter,
             scansLimit: FREE_SCAN_LIMIT,
-            scansRemaining: Math.max(0, FREE_SCAN_LIMIT - (quota?.scanCount ?? FREE_SCAN_LIMIT)),
+            scansRemaining: Math.max(0, FREE_SCAN_LIMIT - scansUsedAfter),
           },
       });
     } catch (error) {

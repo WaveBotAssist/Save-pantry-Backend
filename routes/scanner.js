@@ -177,7 +177,6 @@ router.post(
       // ───────────────────────────────────────────────────────────────────────
 
       const geminiResult = await ApiGemini(ocrText);
-      console.log('reponse de api gemini', geminiResult)
       // Sécurité : si Gemini ne retourne pas de tableau d'items, on retourne vide
       if (!Array.isArray(geminiResult?.items)) {
         return res.status(200).json({

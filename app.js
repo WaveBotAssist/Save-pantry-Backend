@@ -1,7 +1,7 @@
 require('dotenv').config();
 require('./models/connection');
 require('./services/ApiGemini')
-
+// La mise a jour a bien eu lieu
 var express = require('express');
 var path = require('path');
 var cookieParser = require('cookie-parser');
@@ -34,7 +34,7 @@ var recipeRouter = require('./routes/recipe');
 var favoritesRouter = require('./routes/favoritesRecipes');
 var auth = require('./routes/auth');
 var planningRouter = require('./routes/planning');
-var scannerRouter = require('./routes/scanner')
+const scannerRouter = require('./routes/scanner')
 
 // INITIALISATION DE EXPRESS
 var app = express();

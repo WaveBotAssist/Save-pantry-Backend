@@ -2,7 +2,6 @@ require('dotenv').config();
 require('./models/connection');
 require('./services/ApiGemini')
 
-
 var express = require('express');
 var path = require('path');
 var cookieParser = require('cookie-parser');
@@ -35,7 +34,7 @@ var recipeRouter = require('./routes/recipe');
 var favoritesRouter = require('./routes/favoritesRecipes');
 var auth = require('./routes/auth');
 var planningRouter = require('./routes/planning');
-const scannerRouter = require('./routes/scanner')
+var scannerRouter = require('./routes/scanner')
 
 // INITIALISATION DE EXPRESS
 var app = express();

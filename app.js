@@ -1,7 +1,7 @@
 require('dotenv').config();
 require('./models/connection');
 require('./services/ApiGemini')
-
+// cela fonctionne
 var express = require('express');
 var path = require('path');
 var cookieParser = require('cookie-parser');

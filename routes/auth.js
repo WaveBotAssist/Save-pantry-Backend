@@ -59,8 +59,8 @@ router.post(
     }
 
     try {
-      const { username, email, password, tokenpush } = req.body; // email déjà normalisé par customSanitizer
-
+      const { username: rawUsername , email, password, tokenpush } = req.body; // email déjà normalisé par customSanitizer
+       const username = rawUsername?.trim(); //Important le .trim() pour evité les espaces de l username rentrer dans l input sinon pas reconnu pour le partage de listes
       // 1) Unicité username
       const existingUser = await User.findOne({ username });
       if (existingUser) {

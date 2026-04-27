@@ -136,6 +136,39 @@ router.post(
       }
 
       // ───────────────────────────────────────────────────────────────────────
+      // ÉTAPE 1b : Validation qualité OCR — avant le quota pour ne pas
+      // pénaliser l'utilisateur si la photo est mal cadrée ou illisible.
+      // Deux cas rejetés :
+      //   1. Trop court et sans prix → photo floue / hors-sujet
+      //   2. Colonnes fusionnées → ticket photographié de travers ou trop loin
+      //      (plusieurs lignes contiennent 3+ prix = les colonnes sont mélangées)
+      // ───────────────────────────────────────────────────────────────────────
+
+      const ocrLines = ocrText.trim().split('\n').filter(l => l.trim().length > 0);
+      const hasPrices = /\d+[.,]\d+/.test(ocrText);
+
+      // Cas 1 : photo floue ou hors-sujet
+      if (ocrLines.length < 3 && !hasPrices) {
+        return res.status(422).json({
+          result: false,
+          code: 'POOR_OCR_QUALITY',
+          message: 'La photo est trop floue ou mal cadrée. Reprends la photo en t\'assurant que le ticket est bien lisible.',
+        });
+      }
+
+      // Cas 2 : colonnes fusionnées — ticket photographié de travers ou trop loin
+      // Si 2+ lignes contiennent chacune 3+ prix, l'OCR a mélangé les colonnes
+      const pricePattern = /\d+[.,]\d+/g;
+      const linesWithManyPrices = ocrLines.filter(l => (l.match(pricePattern) || []).length >= 5).length;
+      if (linesWithManyPrices >= 2) {
+        return res.status(422).json({
+          result: false,
+          code: 'POOR_OCR_QUALITY',
+          message: 'Le ticket est mal cadré ou trop loin. Tiens le téléphone à plat, bien au-dessus du ticket, et assure-toi que tout le ticket est visible.',
+        });
+      }
+
+      // ───────────────────────────────────────────────────────────────────────
       // ÉTAPE 2 : Vérification du quota
       // Les utilisateurs premium bypassen entièrement cette étape.
       // ───────────────────────────────────────────────────────────────────────
@@ -184,6 +217,7 @@ router.post(
           result: true,
           store: geminiResult?.store || '',
           date: geminiResult?.date || '',
+          currency: geminiResult?.currency || '€',
           items: [],
           total: geminiResult?.total || 0,
         });
@@ -196,17 +230,9 @@ router.post(
       // garantir un résultat propre indépendamment du comportement de Gemini.
       // Clé de déduplication : nom normalisé + prix unitaire.
       // ───────────────────────────────────────────────────────────────────────
-      // Liste blanche des catégories alimentaires valides.
-      // Tout item avec une catégorie hors de cette liste est exclu (non alimentaire).
-      const VALID_CATEGORIES = new Set([
-        'Produits laitiers', 'Féculents', 'Fruits et légumes', 'Matières grasses',
-        'Produits sucrés', 'Boissons', 'Viande, Poisson, oeuf', 'Sauces',
-      ]);
-
       const deduplicatedItems = geminiResult.items.reduce((acc, item) => {
-        // Exclut les produits sans nom ou dont la catégorie n'est pas alimentaire
-        // (Gemini peut retourner "Non alimentaire" ou "" pour les produits hors food)
-        if (!item.name || !VALID_CATEGORIES.has(item.category)) return acc;
+        // Exclut uniquement les produits sans nom
+        if (!item.name) return acc;
 
         const name = item.name || '';
         const price = typeof item.price === 'number' ? item.price : 0;
@@ -261,6 +287,7 @@ router.post(
         result: true,
         store: geminiResult.store || '',
         date: geminiResult.date || '',
+        currency: geminiResult.currency || '€',
         items: enrichedItems,
         total: geminiResult.total || 0,
         // Infos quota retournées au frontend pour mise à jour de l'affichage

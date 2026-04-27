@@ -7,12 +7,13 @@ const expo = new Expo();
 const i18next = require('i18next');
 const { emitItemUpdated, emitItemDeleted, emitListDeleted, emitListUpdated } = require("../utils/socketSync");
 
+
 // route pour créé liste de course et la partager
 router.post('/create-and-share', async (req, res) => {
   try {
     const { title, items, sharedUsers, canEdit } = req.body;
     const owner = await User.findById(req.user._id);
- console.log('isPremium',owner.isPremium)
+
     // ✅ TOUJOURS ajouter le propriétaire avec son username
     const sharedWithCleaned = [{
       userId: owner._id,
@@ -20,7 +21,7 @@ router.post('/create-and-share', async (req, res) => {
       canEdit: true,
       hasSeen: true,
     }];
-
+ 
     console.log('  👤 Propriétaire ajouté');
 
     const usersNotFound = [];
@@ -31,9 +32,9 @@ router.post('/create-and-share', async (req, res) => {
 
       for (const username of sharedUsers) {
         const user = await User.findOne({
-          username: { $regex: new RegExp(`^${username}$`, 'i') },
+          username: { $regex: new RegExp(`^${username.trim()}$`, 'i') },
         });
-
+  
         if (!user) {
           usersNotFound.push(username);
           console.warn(`⚠️ Utilisateur "${username}" non trouvé`);

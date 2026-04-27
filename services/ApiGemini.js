@@ -10,10 +10,12 @@
  * Modèle utilisé : gemini-2.5-flash-lite
  *   → Rapide, peu coûteux, suffisant pour l'extraction de données textuelles.
  *
- * Catégories reconnues (doivent rester synchronisées avec EXPIRY_DAYS_BY_CATEGORY
- * dans utils/receiptExpiryDates.js et avec categorieList dans reducers/user.js) :
+ * Catégories reconnues (alimentaires + non alimentaires) :
  *   "Produits laitiers" | "Féculents" | "Fruits et légumes" | "Matières grasses"
  *   "Produits sucrés" | "Boissons" | "Viande, Poisson, oeuf" | "Sauces"
+ *   "Hygiène" | "Entretien" | "Autre"
+ * Les catégories alimentaires sont enrichies d'une date d'expiration via
+ * utils/receiptExpiryDates.js (fallback 30 jours pour les autres).
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -42,76 +44,69 @@ async function ApiGemini(ocrText) {
   // La catégorie est importante car elle sert à calculer la date d'expiration
   // approximative dans receiptExpiryDates.js.
   // ─────────────────────────────────────────────────────────────────────────
-  const prompt = `
-You are a supermarket receipt parser. Receipt may be in any language. Apply rules below to the OCR text at the end.
+  const prompt = `Supermarket receipt parser. Any language. JSON only.
 
-INPUT: each line is "[PRODUCT] | PRIX: price", "[PRODUCT]" (no price), or "price" (orphan → assign to previous product). Skip non-product lines: address, phone, SIRET, website, register/ticket numbers, loyalty messages.
-- SKIP any line where the text contains 2+ consecutive words that are not real words in any language after OCR correction (pure gibberish like "iplsi gral is", "loof iplsi gral") → promotional/noise line, not a product, even if it has a price.
-- Orphan price line followed by article-code+name: if a line contains ONLY prices (no recognizable product name) AND the NEXT line starts with a numeric code glued to a name (e.g. "077aubergine", "003LAIT"), the prices belong to the FOLLOWING product, not the previous one. Strip the numeric prefix from the name. "1,49  1,15" + "077aubergine" → name=aubergine, price=1.49.
+INPUT
+Lines: "[PRODUCT] | PRIX: price", "[PRODUCT]", or orphan price (assign to previous product ONLY IF that product has no price yet — if it already has one, assign to the NEXT named product instead).
+Skip: address, phone, SIRET, website, ticket numbers, loyalty messages, gibberish (2+ consecutive non-words).
+Orphan price + next line is numeric-code+name (e.g. "077aubergine"): price belongs to NEXT product, strip numeric prefix.
 
-PRICES
-- No assignable price → price: 0.
-- Negative price = discount amount, not product price. Find "REMISE X%" line above → original = |discount| / (X/100). Ex: -2.72 with 50% above → price=5.44. Unknown % → price: 0.
-- "." and "," are both decimal separators. NEVER convert to cents. "48.20"→48.20 (not 0.48). "60.25"→60.25 (not 0.60). "110,00"→110.00 (not 1.10). "1 000,00"→1000.00 (not 10.00).
-- Space between digits = thousands separator. "1 000"→1000, "7 443"→7443. Never split on space inside a number.
-- OCR space after decimal separator: "6, 58"→6.58, "1, 19"→1.19, "0, 72"→0.72. Remove the spurious space before parsing.
-- Ignore VAT suffix after price: "2,99 B"→2.99, "3,07 EUR A"→3.07.
-- Swapped columns: left side looks like a price + right side looks like a name → swap. "3,07 EUR A | PRIX: VOLVIC"→name=VOLVIC, price=3.07.
-- Outlier: same product, one price deviates strongly → OCR error, use consistent price. "Volvic 9.07 + 3.07"→both 3.07. No similar line → price: 0.
-- price = UNIT price always. ONLY divide when qty N is explicitly present in the text (digit before name, "x N", "X N", subtotal). NEVER divide because a price "seems too high" — the receipt may use a non-euro currency. "8 BEURRE | PRIX: 27.20"→price=3.40, qty=8. "CAFE LATTE 0,99 x6"→price=0.99, qty=6. "GEL JAVEL | PRIX: 110,00" (no qty) → price=110.00, qty=1.
-
-OCR CORRECTION
-1. Use your supermarket product knowledge to fix OCR-distorted names — apply broadly, not just to examples:
-   SANOWIOHES BEURRE→SANDWICHES BEURRE, BOLKETTES/BOULIES/BOULEJTES→BOULETTES, HADHE PREPARE→HACHE PREPARE,
-   BOISSON CAFE LATIE/LATE→BOISSON CAFE LATTE, PLAI AU FOUR ITALEN→PLAT AU FOUR ITALIEN,
-   NARS BARRE GL ACEE→MARS BARRE GLACEE, FRTAES/FRI KES STEAKHOUSE→FRITES STEAKHOUSE,
-   RIZ AU LAIT VANTEL→RIZ AU LAIT VANILLE, CHAUSSEE AUX MNES/DHAUSSEE AUX MUINES→CHAUSSEE AUX MOINES,
-   BOUCHER IE/BOUCHER IE TRAD→BOUCHERIE TRAD, WIT LOOF→CHICONS (endive/chicory → Fruits et légumes).
-2. If product not recognized: fix obvious chars (0→O, 8→B, 1→I, N→M, rn→m), remove spurious spaces (GL ACEE→GLACEE), merge split articles (I A→LA, D U→DU, D E→DE, A U→AU — this merging IS allowed even though it changes the text, because it restores a word the OCR split, not invents one). JANBON→JAMBON, PATURAGES I A BtRI→PATURAGES LA BRIE. Otherwise never change meaning. Doubt → keep as-is.
+PRICES (always unit price)
+- No price → 0. "." and "," both decimal separators, never convert to cents: "48.20"→48.20, "110,00"→110.00.
+- Space between digits = thousands separator: "1 000"→1000. OCR space after decimal: "6, 58"→6.58.
+- Ignore VAT suffix: "2,99 B"→2.99, "3,07 EUR A"→3.07.
+- Negative = discount. If product has its own price → ignore discount line entirely. If no product price: original=|discount|/(X/100) from "REMISE X%" above; unknown %→0.
+- Swapped columns (price left, name right): swap. "3,07 EUR A | PRIX: VOLVIC"→name=VOLVIC, price=3.07.
+- Same product, one price deviates strongly → use consistent price. No similar line → 0.
+- NEVER divide price unless qty is explicit in text. "GEL JAVEL 110,00" (no qty)→price=110.00, qty=1.
 
 QUANTITY
-- Integer before name (space-separated, not "0+digits" article code) → qty. "2 PRODUIT | PRIX: 4.00"→qty=2. Remove digit from name.
-- "unit X qty total": "1,39 X 4 5,56"→qty=4, price=1.39.
-- "qty unit total€" in price field: "PRIX: 2 65.07 130.14€"→qty=2, price=65.07.
-- "unit total€" in price field: "PRIX: 60.25 180.75€"→qty=round(180.75/60.25)=3, price=60.25.
-- "x N" in name or after unit: SALADES x2→qty=2; CAFE LATTE 0,99 x6→qty=6, price=0.99. Remove "x N" from name.
-- "price X" + visible subtotal: RIZ 0,35 X + subtotal 0,70→qty=2.
-- Following line "N x unit_price": next line after a product is "N x price" or "N X price" WHERE N is an INTEGER ≥ 1 → qty=N, price=unit_price (overrides the subtotal shown on product line). "Hahnchen Mini-Steaks  6,58 A" + "2 x 3,29"→qty=2, price=3.29. "CRÈME DESSERT  1,30 A" + "2 x 0,65"→qty=2, price=0.65.
-- Weight format "W x P" or "W kg x P EUR/kg": the line after a product containing "kg x" or "kg X" is always a weight detail line, NOT a quantity. qty=1 always. NEVER add weights together across multiple lines.
-  - PRIORITY RULE: if the product line already has a price → that price is always correct, ignore EUR/kg entirely. "Erdbeeren kg  2,28 A" + "8,458 kg x 4,98 EUR/kg"→price=2.28. "Bananen  0,72 A" + "8,730 kg x 0,99 EUR/kg"→price=0.72. Even if W×P/kg does not match the product line price (OCR error on W), the product line price wins.
-  - If the weight line ends with a total AND no price on product line: use that total. "0,620 kg X 7,49EURO/kg  4,64 EUR"→price=4.64.
-  - If no total anywhere → price=EUR/kg value, qty=1.
-  - "+" at end of product name means weight detail follows on next line: "AILES DE POULET X8 +" + "0,620 kg X 7,49EURO/kg  4,64 EUR"→name="AILES DE POULET X8", qty=1, price=4.64.
-  - Two lines with same product name + different weights = two SEPARATE items, never merge. "AILES DE POULET X8" at 4,64 + "AILES DE POULET X8" at 4,44 → two items, qty=1 each.
-  - Strip "kg" from product name if it appears at the end: "Erdbeeren kg"→name="Erdbeeren".
-- Pack ≠ qty: "x N" or "(x N)" in product name:
-  - Inside parentheses "(x N)" → ALWAYS pack description, qty=1, price as shown. "Yaourts nature (x 12)  1,75€"→qty=1, price=1.75. Never divide.
-  - Outside parentheses "x N" → price/N realistic AND N ≤ 6 → true qty, divide. "Salades x2  2,20€"→qty=2, price=1.10. price/N unrealistic OR N > 6 → pack description, qty=1.
-  - (Skip if price precedes "x N" — already unit.)
+- Integer before name (not "0+digits" article code) → qty, remove from name. "2 PRODUIT 4.00"→qty=2.
+- "unit X qty total": verify unit×qty≈total (±0.02); if not → price=total/qty. "9,35 X 2 0,70"→price=0.35.
+- "PRIX: qty unit total€": "PRIX: 2 65.07 130.14€"→qty=2, price=65.07.
+- "PRIX: unit total€": qty=round(total/unit). "PRIX: 60.25 180.75€"→qty=3, price=60.25.
+- "x N" in name or after price → qty=N, remove from name. "CAFE LATTE 0,99 x4"→qty=4, price=0.99.
+- Next line "N x price": overrides product qty/price. "Mini-Steaks 6,58" + "2 x 3,29"→qty=2, price=3.29.
+- "W kg x P EUR/kg" (or "W kg X P EURO/kg") after product = weight line. qty=1 ALWAYS — NEVER use the weight in kg as quantity.
+  - Product has price on its own line → keep that price, ignore kg line entirely.
+  - No product price → look for a TOTAL amount at the END of the kg line (after the EUR/kg rate):
+    - If a total is present (e.g. "0.603 kg X 9.09 EUR/kg  5.48 EUR"): price = TOTAL (5.48), NOT the per-kg rate (9.09). qty=1.
+    - If no total at end of line: price = EUR/kg rate, qty=1.
+  - CRITICAL: "0.603 kg X 9.09 EUR/kg  5.48 EUR" → price=5.48, qty=1. NEVER price=9.09, qty=0.603.
+  - Same product name + different weights = separate items. Strip trailing "kg" from name.
+- "(x N)" in name = pack description, qty=1, never divide.
+- "x N" outside parens: if price/N realistic AND N≤6 → true qty, divide. Else pack, qty=1.
+
+OCR CORRECTION
+ALWAYS try to identify and restore the real product name using your knowledge of real supermarket food products. If a word resembles a known food product even with multiple wrong characters, correct it — do not leave a garbled name as-is. Only keep as-is if truly unrecognizable after attempting correction.
+- Known fixes: SANOWIOHES/SANDWIDHES→SANDWICHES, BOLKETTES/BOULIES/BOUTETYES→BOULETTES, LATIE→LATTE (anywhere in name), FRTAES→FRITES, RIZ AU LAIT VANTEL→RIZ AU LAIT VANILLE, GUDA/GOODA→GOUDA, DHIPOLATA→CHIPOLATA, BOUCHER IE→BOUCHERIE, WIT LOOF→CHICONS, HADHE/HADHE→HACHE, CROISSANI/CROTSSANT→CROISSANT, SIEAKHOUSE→STEAKHOUSE, COLQUE/COUQE/KOUKE→COUQUE (Belgian pastry), BOTSSON→BOISSON, EPAJLE/EPAJULE→EPAULE, JAMBJN→JAMBON, POJLET→POULET.
+- General: 0→O, 8→B, 1→I, I↔T (very common OCR swap), rn→m; remove spurious spaces (GL ACEE→GLACEE); merge split articles (I A→LA, D U→DU, A U→AU). When multiple characters are wrong, use your food knowledge to infer the most likely real product name — a confident best guess is always better than leaving a garbled word.
 
 GROUPING
-Correct OCR first, then: same corrected name (≤2 char diff) + same numeric price → merge into one item, qty=count. "VOLVIC"+"V0LVIC" at 3.07→qty=2. Weight items → keep separate. "IPR CAFE LATTE MACCH" + "1PR CAFE LATIE MACCH" at 0.99→qty=2, name="CAFE LATTE MACCHIATO".
+After OCR fix: same name (≤3 char diff) + same price → merge, qty=count. Weight items: always separate.
+OCR variant rule: if two product lines have the same price and their names differ only by typical OCR noise (one or two character swaps/substitutions like LATTE/LATIE, MACCH/MACCHI, POULET/POUIET) → they are the SAME product, merge them regardless of char diff count.
 
 FILTER OUT
-- Non-food: perfume, cosmetics, soap, clothing, DVD, cookware, etc.
-- Department/counter labels with a price ARE valid products (e.g. "Boucherie Trad 8,83 EUR" = a meat purchase at the butcher counter → category "Viande, Poisson, oeuf"). Only exclude department names that have NO price.
-- Discount lines (REMISE, PROMO, ECO, negative amounts) → remove line, keep product at pre-discount price.
-- Bilingual promo lines (Lidl Belgium etc.): a line showing a translation of the previous product + garbled promo text + price (e.g. "wit loof iplsi gral is  1,69" after "CHICONS  1,89 x 2  3,78") → NOT a product, exclude.
-- "offert", "gratuit", "3e offert", "offert" in a PRODUCT NAME (not a standalone line) means a bundle promotion — keep the product with its price as shown. "Café Espresso 100% arabica 3e offert  5,50€"→name="Café Espresso 100% arabica", price=5.50, qty=1. Only exclude if the entire line is a discount/credit with no product name.
-- Amount lines: TOTAL, subtotal, VAT, "A payer", "MONTANT DÛ", "Zu zahlen", "ZU ZAHLEN". IMPORTANT: the product line immediately before these total lines is still a valid product — never skip it.
-- No valid food category → exclude.
+- Any line representing a discount, price reduction or promotion in any language (identified by a negative amount, a percentage reduction, or wording meaning "discount/promo/saving/reduction") → exclude. Product price = always the positive price on its own line, never modified by discounts. "SALADE GRECQUE 4,99" + "REMISE 50% -2,50"→price=4.99.
+- Bilingual promo lines (translation of previous product + garbled text) → exclude.
+- Any wording meaning "free"/"offered"/"gift" inside a product name = bundle promo → keep product with its price.
+- Any line representing a subtotal, grand total, amount due, payment method, tax, change given, or loyalty balance in any language → exclude. Last product before total: keep.
+- No recognizable product name → exclude.
+- Hygiene or cleaning products → keep, assign Hygiène or Entretien.
+- Truly non-trackable items (batteries, cookware, appliances, toys, clothing) → exclude.
+- Any line representing a receipt stamp, validation seal, or non-food brand (e.g. cookware, appliances) → exclude. "CACHET [Brand]" (e.g. "CACHET TEFAL", "CACHET SEB") = validation stamp printed on receipt, NOT a product → exclude.
 
 OUTPUT
-category (exactly one): Produits laitiers | Féculents | Fruits et légumes | Matières grasses | Produits sucrés | Boissons | Viande, Poisson, oeuf | Sauces
-store (exactly one if known): Lidl | Intermarche | Cora | Carrefour | Spar | Colruyt | Okay | Aldi | Auchan | Leader Price | Leclerc — else first-letter-uppercase (ex: "Casino"). Doubt or unreadable → "". Never use city/address as store name.
-date: YYYY-MM-DD. total: copy from "TOTAL"/"A payer" line only, never calculate.
+category (exactly one, no other value allowed): Produits laitiers | Féculents | Fruits et légumes | Matières grasses | Produits sucrés | Boissons | Viande, Poisson, oeuf | Sauces | Hygiène | Entretien
+Pick the closest category — every product must be assigned one of these 10 values:
+Produits laitiers=dairy, eggs, frozen/chilled foods; Féculents=bread/pasta/rice/cereals/pastries/legumes/potatoes/fries/chips/snacks; Fruits et légumes=fresh fruits and vegetables (not frozen, not chips); Matières grasses=oils/butter/margarine; Produits sucrés=chocolate/jam/honey/candy/sugar; Boissons=any drink; Viande, Poisson, oeuf=meat/fish/seafood/deli including all processed meat products (boulettes, saucisses, nuggets); Sauces=condiments/sauces/vinegar/mustard; Hygiène=personal care/soap/cosmetics; Entretien=household cleaning/detergent.
+store: look in the FIRST lines of the receipt (header, before any product line). Extract the real business or brand name using your own knowledge to correct OCR noise (e.g. "REyhaN"→"Reyhan", "LIDI"→"Lidl", "lntermarche"→"Intermarche"). Never use generic words like "Supermarché", "Supermarket", "Magasin" or "Shop" as the store name — those describe the type of store, not its name. If the name is truly unrecognizable → "".
+date: YYYY-MM-DD. total: copy from TOTAL/A payer only, never calculate. currency: symbol from receipt, default "€".
 
-Respond ONLY with JSON (no markdown, no backticks):
-{"store":"","date":"","items":[{"name":"","price":0.00,"quantity":1,"category":""}],"total":0.00}
+{"store":"","date":"","currency":"€","items":[{"name":"","price":0.00,"quantity":1,"category":""}],"total":0.00}
 
 OCR TEXT:
-${ocrText}
-`;
+${ocrText}`;
 
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash-lite',

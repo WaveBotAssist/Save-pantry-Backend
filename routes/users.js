@@ -204,15 +204,20 @@ router.delete('/deleteUser', checkToken, async (req, res) => {
 
 // Route pour modifier le choix de l'utilisateur pour la langue de l'application
 router.put('/updateLanguage', checkToken, async (req, res) => {
-  const { language } = req.body;
-  const userId = req.user._id;
+  try {
+    const { language } = req.body;
+    const userId = req.user._id;
 
-  if (!['fr', 'en'].includes(language)) {
-    return res.status(400).json({ error: 'Langue non prise en charge' });
+    if (!['fr', 'en'].includes(language)) {
+      return res.status(400).json({ error: 'Langue non prise en charge' });
+    }
+
+    await User.findByIdAndUpdate(userId, { language });
+    res.json({ result: true, message: 'Langue mise à jour' });
+  } catch (err) {
+    console.error('Erreur /updateLanguage:', err);
+    res.status(500).json({ result: false, error: err.message });
   }
-
-  await User.findByIdAndUpdate(userId, { language });
-  res.json({ result: true, message: 'Langue mise à jour' });
 });
 
 // Cron pour mettre à jour les prix des produits

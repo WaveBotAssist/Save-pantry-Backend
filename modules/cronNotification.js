@@ -17,6 +17,7 @@ function formatNamesShort(names) {
 // --- Cron ---
 cron.schedule('0 * * * *', async () => {
   console.log("📅 Vérification des dates de péremption et envoi des notifications...");
+  try {
 
   const users = await User.find(
     { 'notificationSettings.expiry.enabled': true },
@@ -134,9 +135,12 @@ cron.schedule('0 * * * *', async () => {
 
       if (message) {
         console.log(`📨 ${element.email} : ${message}`);
-        sendPushNotification(element.tokenpush, message);
+        await sendPushNotification(element.tokenpush, message);
       }
     }
+  }
+  } catch (err) {
+    console.error('❌ Erreur cron expiry notifications:', err);
   }
 });
 
@@ -176,7 +180,7 @@ const sendPushNotification = async (pushToken, message) => {
       }
     }
   } catch (error) {
-    console.error('❌ Erreur lors de l’envoi:', error);
+    console.error("❌ Erreur lors de l’envoi:", error);
   }
 };
 
@@ -186,6 +190,7 @@ const sendPushNotification = async (pushToken, message) => {
 // Deuxième CRON pour le rappel groupé hebdomadaire des produits périmés
 cron.schedule('0 9 * * 1', async () => {
   console.log("📅 Envoi du rappel hebdomadaire pour les produits périmés...");
+  try {
 
   const users = await User.find(
     { 'notificationSettings.expiry.enabled': true },
@@ -215,8 +220,11 @@ cron.schedule('0 9 * * 1', async () => {
       i18next.changeLanguage(userLang);
 
       const message = i18next.t("expired_reminder", { count: expiredProducts.length });
-      sendPushNotification(element.tokenpush, message);
+      await sendPushNotification(element.tokenpush, message);
     }
+  }
+  } catch (err) {
+    console.error('❌ Erreur cron rappel hebdomadaire:', err);
   }
 });
 

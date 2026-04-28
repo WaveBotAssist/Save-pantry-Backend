@@ -299,41 +299,61 @@ router.get('/my-recipes', async (req, res) => {
 
 // petite route utilisée dans PlanningScreen.js pour afficher toutes les recettes et les planifier
 router.get('/recipesList', async (req, res) => {
-  const allRecipes = await Recipes.find()
-  res.json({ result: allRecipes })
-})
+  try {
+    const allRecipes = await Recipes.find();
+    res.json({ result: allRecipes });
+  } catch (err) {
+    console.error('Erreur /recipesList:', err);
+    res.status(500).json({ result: false, error: err.message });
+  }
+});
 
 
 // Lister les recettes qui sont en attentes de validation ('pending' en dataBase)
 router.get('/mod/pending', checkRole('admin'), async (req, res) => {
-  const { page = 1, limit = 30 } = req.query;
-  const skip = (page - 1) * limit;
-  const [items, total] = await Promise.all([
-    Recipes.find({ status: 'pending' })
-      .select('_id titre image categorie langue tags ingredients instructions auteur createdAt')
-      .sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)),
-    Recipes.countDocuments({ status: 'pending' }),
-  ]);
-  res.json({ result: true, page: +page, pages: Math.ceil(total / limit), total, items });
+  try {
+    const { page = 1, limit = 30 } = req.query;
+    const skip = (page - 1) * limit;
+    const [items, total] = await Promise.all([
+      Recipes.find({ status: 'pending' })
+        .select('_id titre image categorie langue tags ingredients instructions auteur createdAt')
+        .sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)),
+      Recipes.countDocuments({ status: 'pending' }),
+    ]);
+    res.json({ result: true, page: +page, pages: Math.ceil(total / limit), total, items });
+  } catch (err) {
+    console.error('Erreur /mod/pending:', err);
+    res.status(500).json({ result: false, error: err.message });
+  }
 });
 
 // Approuver
 router.post('/mod/:id/approve', checkRole('admin'), async (req, res) => {
-  const r = await Recipes.findByIdAndUpdate(req.params.id, {
-    $set: { status: 'approved', reviewedBy: req.user._id, reviewedAt: new Date(), rejectionReason: null }
-  }, { new: true });
-  if (!r) return res.status(404).json({ result: false, error: 'Not found' });
-  res.json({ result: true, recipe: r });
+  try {
+    const r = await Recipes.findByIdAndUpdate(req.params.id, {
+      $set: { status: 'approved', reviewedBy: req.user._id, reviewedAt: new Date(), rejectionReason: null }
+    }, { new: true });
+    if (!r) return res.status(404).json({ result: false, error: 'Not found' });
+    res.json({ result: true, recipe: r });
+  } catch (err) {
+    console.error('Erreur /mod/approve:', err);
+    res.status(500).json({ result: false, error: err.message });
+  }
 });
 
 // Refuser
 router.post('/mod/:id/reject', checkRole('admin'), async (req, res) => {
-  const { reason } = req.body;
-  const r = await Recipes.findByIdAndUpdate(req.params.id, {
-    $set: { status: 'rejected', reviewedBy: req.user._id, reviewedAt: new Date(), rejectionReason: reason || '' }
-  }, { new: true });
-  if (!r) return res.status(404).json({ result: false, error: 'Not found' });
-  res.json({ result: true, recipe: r });
+  try {
+    const { reason } = req.body;
+    const r = await Recipes.findByIdAndUpdate(req.params.id, {
+      $set: { status: 'rejected', reviewedBy: req.user._id, reviewedAt: new Date(), rejectionReason: reason || '' }
+    }, { new: true });
+    if (!r) return res.status(404).json({ result: false, error: 'Not found' });
+    res.json({ result: true, recipe: r });
+  } catch (err) {
+    console.error('Erreur /mod/reject:', err);
+    res.status(500).json({ result: false, error: err.message });
+  }
 });
 
 //route pour supprimer une recette selectionnée par son _id

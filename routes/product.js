@@ -363,15 +363,16 @@ router.get('/getproducts', async (req, res) => {
 
 
 //recherche d'un produit par nom
-router.get('/getproducts/:name', (req, res) => {
-  Product.findOne({ name: req.params.name }).then(dataProduct => {
-    res.json({ result: true, products: dataProduct })
-  })
-    .then(() => {
-      res.status(404).json({ result: false, message: 'This product not existing' })
-    }).catch(err => {
-      res.status(500).json({ result: false, error: err.message });
-    });
+router.get('/getproducts/:name', async (req, res) => {
+  try {
+    const dataProduct = await Product.findOne({ name: req.params.name });
+    if (!dataProduct) {
+      return res.status(404).json({ result: false, message: 'This product not existing' });
+    }
+    res.json({ result: true, products: dataProduct });
+  } catch (err) {
+    res.status(500).json({ result: false, error: err.message });
+  }
 })
 
 //recherche d'un produit par son code barre

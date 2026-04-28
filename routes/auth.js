@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const bcrypt = require('bcrypt');
 const uid2 = require('uid2');
 const crypto = require('crypto');
@@ -116,7 +116,7 @@ router.post(
       if (err?.code === 11000) {
         return res.status(400).json({
           result: false,
-          message: 'Nom d’utilisateur ou email déjà utilisé',
+          message: "Nom d'utilisateur ou email déjà utilisé",
         });
       }
       console.error('Signup error:', err);
@@ -128,78 +128,93 @@ router.post(
 
 // route pour ce connecter dans l app
 router.post('/signin', loginLimiter, async (req, res) => {
-  const { email, password, deviceId } = req.body || {};
-  if (!deviceId) {
-    return res.status(400).json({
-      result: false,
-      error: 'Missing deviceId'
-    });
-  }
-  const user = await User.findOne({ email }).select('+password');
-  if (!user || !(await bcrypt.compare(password, user.password))) {
-    return res.status(400).json({ result: false, error: 'Invalid credentials' });
-  }
-  if (!user.emailVerified) {
-    return res.status(400).json({ result: false, error: 'Email not verified' });
-  }
-
-  // 🧠 Si utilisateur non premium : on vérifie s'il a déjà une session active
-  if (!user.isPremium) {
-    const activeSession = await Session.findOne({
-      userId: user._id,
-      revokedAt: null,
-      expiresAt: { $gt: new Date() },
-      deviceId: { $ne: deviceId },
-    });
-
-    // ❗ vraie double connexion uniquement si device différent
-    if (activeSession && activeSession.deviceId !== req.body.deviceId) {
-      return res.status(403).json({
+  try {
+    const { email, password, deviceId } = req.body || {};
+    if (!deviceId) {
+      return res.status(400).json({
         result: false,
-        reason: 'multiple_session',
-        showPaywall: true,
-        message: 'You already have an active session on another device. Upgrade to Premium to connect on multiple devices.'
+        error: 'Missing deviceId'
       });
     }
+    const user = await User.findOne({ email }).select('+password');
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(400).json({ result: false, error: 'Invalid credentials' });
+    }
+    if (!user.emailVerified) {
+      return res.status(400).json({ result: false, error: 'Email not verified' });
+    }
+
+    // 🧠 Si utilisateur non premium : on vérifie s'il a déjà une session active
+    if (!user.isPremium) {
+      const activeSession = await Session.findOne({
+        userId: user._id,
+        revokedAt: null,
+        expiresAt: { $gt: new Date() },
+        deviceId: { $ne: deviceId },
+      });
+
+      // ❗ vraie double connexion uniquement si device différent
+      if (activeSession && activeSession.deviceId !== req.body.deviceId) {
+        return res.status(403).json({
+          result: false,
+          reason: 'multiple_session',
+          showPaywall: true,
+          message: 'You already have an active session on another device. Upgrade to Premium to connect on multiple devices.'
+        });
+      }
+    }
+
+    // Ensuite, on crée une nouvelle session normalement
+    const raw = uid2(64);
+    await Session.create({
+      userId: user._id,
+      tokenHash: await bcrypt.hash(raw, 10),
+      tokenFingerprint: sha256(raw),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      device: req.headers['user-agent'] || 'mobile',
+      deviceId
+    });
+
+    res.json({
+      result: true,
+      _id: user._id,
+      token: raw,
+      username: user.username,
+      role: user.role,
+      email: user.email,
+      myproducts: user.myproducts,
+      revenuecatId: user.revenuecatId,
+      isPremium: user.isPremium || false,
+    });
+  } catch (err) {
+    console.error('Signin error:', err);
+    res.status(500).json({ result: false, error: 'Server error' });
   }
-
-  // Ensuite, on crée une nouvelle session normalement
-  const raw = uid2(64);
-  await Session.create({
-    userId: user._id,
-    tokenHash: await bcrypt.hash(raw, 10),
-    tokenFingerprint: sha256(raw),
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    device: req.headers['user-agent'] || 'mobile',
-    deviceId
-  });
-
-  res.json({
-    result: true,
-    _id: user._id,
-    token: raw,
-    username: user.username,
-    role: user.role,
-    email: user.email,
-    myproducts: user.myproducts,
-    revenuecatId: user.revenuecatId,
-    isPremium: user.isPremium || false,
-  });
 });
 
 
 
 router.post('/logout', checkToken, async (req, res) => {
-  const SessionModel = require('../models/session');
-  await SessionModel.findByIdAndUpdate(req.sessionId, { $set: { revokedAt: new Date() } });
-  res.json({ result: true });
+  try {
+    const SessionModel = require('../models/session');
+    await SessionModel.findByIdAndUpdate(req.sessionId, { $set: { revokedAt: new Date() } });
+    res.json({ result: true });
+  } catch (err) {
+    console.error('Logout error:', err);
+    res.status(500).json({ result: false, error: 'Server error' });
+  }
 });
 
 router.post('/sessions/renew', checkToken, async (req, res) => {
-  const SessionModel = require('../models/session');
-  const newExp = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-  await SessionModel.findByIdAndUpdate(req.sessionId, { $set: { expiresAt: newExp } });
-  res.json({ result: true, expiresAt: newExp });
+  try {
+    const SessionModel = require('../models/session');
+    const newExp = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await SessionModel.findByIdAndUpdate(req.sessionId, { $set: { expiresAt: newExp } });
+    res.json({ result: true, expiresAt: newExp });
+  } catch (err) {
+    console.error('Sessions renew error:', err);
+    res.status(500).json({ result: false, error: 'Server error' });
+  }
 });
 
 
@@ -277,7 +292,7 @@ router.post('/reset', async (req, res) => {
     user.password = await bcrypt.hash(newPassword, 10);
     await user.save();
 
-    await Session.deleteMany({ userId: user._id }).catch(() => { });
+    await Session.deleteMany({ userId: user._id }).catch((e) => { console.error('[RESET] deleteMany sessions failed:', e); });
     pr.usedAt = new Date();
     await pr.save();
 
@@ -291,129 +306,136 @@ router.post('/reset', async (req, res) => {
 
 
 
-//Endpoint : demande d’OTP (request) Appelé après signup ou depuis un bouton “Renvoyer”.
+//Endpoint : demande d'OTP (request) Appelé après signup ou depuis un bouton “Renvoyer”.
 router.post('/email/verify/request-otp', requestLimiter, async (req, res) => {
-  const { email } = req.body || {};
-  if (!email) return res.status(400).json({ ok: false, error: 'Missing email' });
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ ok: false, error: 'Missing email' });
 
-  const emailLower = email.trim().toLowerCase();
-  const user = await User.findOne({ email: emailLower });
-  // Réponse générique (pas d’énumération)
-  const generic = { ok: true, message: 'Si le compte est éligible, un code a été envoyé.' };
-  if (!user || user.emailVerified) return res.json(generic);
+    const emailLower = email.trim().toLowerCase();
+    const user = await User.findOne({ email: emailLower });
+    // Réponse générique (pas d'énumération)
+    const generic = { ok: true, message: 'Si le compte est éligible, un code a été envoyé.' };
+    if (!user || user.emailVerified) return res.json(generic);
 
-  // Anti-abus simple (cooldown 60s + 5/jour)
-  const now = new Date();
-  const todayKey = now.toISOString().slice(0, 10);
+    // Anti-abus simple (cooldown 60s + 5/jour)
+    const now = new Date();
+    const todayKey = now.toISOString().slice(0, 10);
 
-  let last = await EmailOtp.findOne({ userId: user._id, purpose: 'verify_email' })
-    .sort({ createdAt: -1 });
-  if (last) {
-    const lastSec = last.lastSentAt ? ((now - last.lastSentAt) / 1000) : 9999;
-    if (lastSec < 60) return res.json(generic);
-    // reset du compteur quotidien
-    const lastDay = (last.lastSentAt || last.createdAt).toISOString().slice(0, 10);
-    if (lastDay !== todayKey) last.sentCountDay = 0;
-    if (last.sentCountDay >= 5) return res.json(generic);
+    let last = await EmailOtp.findOne({ userId: user._id, purpose: 'verify_email' })
+      .sort({ createdAt: -1 });
+    if (last) {
+      const lastSec = last.lastSentAt ? ((now - last.lastSentAt) / 1000) : 9999;
+      if (lastSec < 60) return res.json(generic);
+      // reset du compteur quotidien
+      const lastDay = (last.lastSentAt || last.createdAt).toISOString().slice(0, 10);
+      if (lastDay !== todayKey) last.sentCountDay = 0;
+      if (last.sentCountDay >= 5) return res.json(generic);
+    }
+
+    // invalider anciens codes non utilisés
+    await EmailOtp.updateMany(
+      { userId: user._id, purpose: 'verify_email', usedAt: null },
+      { $set: { usedAt: new Date() } }
+    );
+
+    const code = genCode();
+    await EmailOtp.create({
+      userId: user._id,
+      emailLower,
+      purpose: 'verify_email',
+      codeHash: await hash(code),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000), //valable 10 min
+      attempts: 0,
+      lastSentAt: now,
+      sentCountDay: last ? Math.min((last.sentCountDay || 0) + 1, 99) : 1,
+    });
+
+    await sendEmailOtp({ toEmail: user.email, toName: user.username || '', code });
+    return res.json(generic);
+  } catch (err) {
+    console.error('request-otp error:', err);
+    res.status(500).json({ ok: false, error: 'Server error' });
   }
-
-  // invalider anciens codes non utilisés
-  await EmailOtp.updateMany(
-    { userId: user._id, purpose: 'verify_email', usedAt: null },
-    { $set: { usedAt: new Date() } }
-  );
-
-  const code = genCode();
-  await EmailOtp.create({
-    userId: user._id,
-    emailLower,
-    purpose: 'verify_email',
-    codeHash: await hash(code),
-    expiresAt: new Date(Date.now() + 10 * 60 * 1000), //valable 10 min
-    attempts: 0,
-    lastSentAt: now,
-    sentCountDay: last ? Math.min((last.sentCountDay || 0) + 1, 99) : 1,
-  });
-
-  await sendEmailOtp({ toEmail: user.email, toName: user.username || '', code });
-  return res.json(generic);
 });
 
 
 //Endpoint : confirmation (confirm)
 router.post('/email/verify/confirm-otp', async (req, res) => {
-  const { email, code, deviceId } = req.body || {};
-  if (!email || !code) return res.status(400).json({ ok: false });
-  if (!deviceId) {
-    return res.status(400).json({
-      result: false,
-      error: 'Missing deviceId'
+  try {
+    const { email, code, deviceId } = req.body || {};
+    if (!email || !code) return res.status(400).json({ ok: false });
+    if (!deviceId) {
+      return res.status(400).json({
+        result: false,
+        error: 'Missing deviceId'
+      });
+    }
+
+    const user = await User.findOne({ email });
+    const generic = { ok: false, error: 'Code invalide ou expiré' };
+    if (!user || user.emailVerified) return res.status(400).json(generic);
+
+
+    const rec = await EmailOtp.findOne({
+      userId: user._id,
+      purpose: 'verify_email',
+      usedAt: null,
+      expiresAt: { $gt: new Date() },
+    }).sort({ createdAt: -1 });
+    if (!rec) return res.status(400).json(generic);
+
+    if (rec.attempts >= 5) return res.status(429).json(generic);
+
+    const ok = await compare(code, rec.codeHash);
+    if (!ok) {
+      await EmailOtp.updateOne({ _id: rec._id }, { $inc: { attempts: 1 } });
+      return res.status(400).json(generic);
+    }
+
+    // 1) Marquer comme vérifié + consommer l'OTP
+    await User.updateOne({ _id: user._id }, { $set: { emailVerified: true, verifiedAt: new Date() } });
+    await EmailOtp.updateOne({ _id: rec._id }, { $set: { usedAt: new Date() } });
+    await EmailOtp.updateMany(
+      { userId: user._id, purpose: 'verify_email', usedAt: null, _id: { $ne: rec._id } },
+      { $set: { usedAt: new Date() } }
+    );
+
+    // 🧩 Si non premium → supprimer les anciennes sessions
+    if (!user.isPremium) {
+      await Session.deleteMany({ userId: user._id });
+    }
+
+    // 2) (Optionnel) Auto-signin: créer une session et renvoyer le token
+    const rawToken = crypto.randomBytes(48).toString('hex');
+    const tokenHash = await bcrypt.hash(rawToken, 10);
+    const tokenFingerprint = sha256(rawToken);
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 jours
+
+    await Session.create({
+      userId: user._id,
+      tokenHash,
+      tokenFingerprint,
+      expiresAt,
+      device: req.get('User-Agent') || 'mobile',
+      deviceId,
     });
+
+    // Tu peux aussi peupler ce dont le front a besoin au premier affichage
+    const u = await User.findById(user._id).select('username email myproducts');
+
+    return res.json({
+      ok: true,
+      _id: u._id,
+      token: rawToken,
+      username: u.username,
+      email: u.email,
+      myproducts: u.myproducts || [],
+    });
+  } catch (err) {
+    console.error('confirm-otp error:', err);
+    res.status(500).json({ ok: false, error: 'Server error' });
   }
-
-  const user = await User.findOne({ email });
-  const generic = { ok: false, error: 'Code invalide ou expiré' };
-  if (!user || user.emailVerified) return res.status(400).json(generic);
-
-
-  const rec = await EmailOtp.findOne({
-    userId: user._id,
-    purpose: 'verify_email',
-    usedAt: null,
-    expiresAt: { $gt: new Date() },
-  }).sort({ createdAt: -1 });
-  if (!rec) return res.status(400).json(generic);
-
-  if (rec.attempts >= 5) return res.status(429).json(generic);
-
-  const ok = await compare(code, rec.codeHash);
-  if (!ok) {
-    await EmailOtp.updateOne({ _id: rec._id }, { $inc: { attempts: 1 } });
-    return res.status(400).json(generic);
-  }
-
-  // 1) Marquer comme vérifié + consommer l’OTP
-  await User.updateOne({ _id: user._id }, { $set: { emailVerified: true, verifiedAt: new Date() } });
-  await EmailOtp.updateOne({ _id: rec._id }, { $set: { usedAt: new Date() } });
-  await EmailOtp.updateMany(
-    { userId: user._id, purpose: 'verify_email', usedAt: null, _id: { $ne: rec._id } },
-    { $set: { usedAt: new Date() } }
-  );
-
-  // 🧩 Si non premium → supprimer les anciennes sessions
-  if (!user.isPremium) {
-    await Session.deleteMany({ userId: user._id });
-  }
-
-  // 2) (Optionnel) Auto-signin: créer une session et renvoyer le token
-  const rawToken = crypto.randomBytes(48).toString('hex');
-  const tokenHash = await bcrypt.hash(rawToken, 10);
-  const tokenFingerprint = sha256(rawToken);
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 jours
-
-  await Session.create({
-    userId: user._id,
-    tokenHash,
-    tokenFingerprint,
-    expiresAt,
-    device: req.get('User-Agent') || 'mobile',
-    deviceId,
-  });
-
-  // Tu peux aussi peupler ce dont le front a besoin au premier affichage
-  const u = await User.findById(user._id).select('username email myproducts');
-
-  return res.json({
-    ok: true,
-    _id: u._id,
-    token: rawToken,
-    username: u.username,
-    email: u.email,
-    myproducts: u.myproducts || [],
-  });
-
-  // 3) Sinon, comportement actuel
-  return res.json({ ok: true });
 });
 
 

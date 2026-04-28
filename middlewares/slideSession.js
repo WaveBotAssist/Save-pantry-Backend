@@ -9,6 +9,8 @@ module.exports = async function slideSession(req, res, next) {
         $set: { expiresAt: new Date(Date.now() + 7*24*60*60*1000) }
       });
     }
-  } catch {}
+  } catch (err) {
+    console.error('slideSession error:', err);
+  }
   next();
 };

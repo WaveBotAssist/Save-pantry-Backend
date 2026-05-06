@@ -260,4 +260,77 @@ router.post('/inventory/undo', async (req, res) => {
   }
 });
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   POST /planning/generate  — Génération IA d'un planning anti-gaspillage
+   body: { weekStart: string (YYYY-MM-DD) }
+   Analyse le garde-manger + les recettes de l'utilisateur et propose
+   un dîner par jour de la semaine en priorisant les aliments proches
+   de leur date d'expiration.
+───────────────────────────────────────────────────────────────────────────── */
+const { generateWeeklyPlan } = require('../services/recipeAI');
+const UserRecipe = require('../models/userRecipe');
+
+router.post('/generate', async (req, res) => {
+  try {
+    const { weekStart } = req.body;
+    const userId = req.user._id;
+
+    if (!weekStart) {
+      return res.status(400).json({ result: false, error: 'weekStart manquant (format YYYY-MM-DD).' });
+    }
+
+    // Récupérer le garde-manger et les recettes personnelles en parallèle
+    const [user, rawRecipes] = await Promise.all([
+      User.findById(userId).select('myproducts'),
+      UserRecipe.find({ userId }).select('_id titre ingredients'),
+    ]);
+
+    if (!user) {
+      return res.status(404).json({ result: false, error: 'Utilisateur introuvable.' });
+    }
+
+    // Normaliser les ingrédients : dans userrecipes ce sont des strings,
+    // generateWeeklyPlan attend des objets { name, quantity, unit }
+    const recipes = rawRecipes.map(r => ({
+      _id: r._id,
+      titre: r.titre,
+      ingredients: (r.ingredients ?? []).map(ing =>
+        typeof ing === 'string'
+          ? { name: ing, quantity: '', unit: '' }
+          : ing
+      ),
+    }));
+
+    // Date du jour — utilisée pour le filtre d'expiration
+    const today   = new Date();
+    const in3days = new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000);
+
+    const expiringProducts = (user.myproducts ?? []).filter(p =>
+      p.expiration && new Date(p.expiration) <= in3days
+    );
+    const otherProducts = (user.myproducts ?? []).filter(p =>
+      !p.expiration || new Date(p.expiration) > in3days
+    );
+
+    // Mélange aléatoire des recettes pour varier les suggestions à chaque génération
+    const selectedRecipes = [...recipes]
+      .sort(() => Math.random() - 0.5)
+      .slice(0, 40);
+
+    console.log(`[planning/generate] ${recipes.length} recette(s) — ${expiringProducts.length} produit(s) expirant(s) — ${selectedRecipes.length} recette(s) envoyée(s) à Gemini`);
+
+    const plan = await generateWeeklyPlan(
+      expiringProducts,
+      otherProducts,
+      selectedRecipes,
+      weekStart
+    );
+
+    res.json({ result: true, plan });
+  } catch (err) {
+    console.error('❌ [POST /planning/generate]', err.message);
+    res.status(500).json({ result: false, error: 'Erreur lors de la génération du planning.' });
+  }
+});
+
 module.exports = router;

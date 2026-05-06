@@ -3,6 +3,7 @@ const router = express.Router()
 const checkRole = require('../middlewares/checkRole');
 const User = require('../models/users');
 const Recipes = require('../models/recipe');
+const UserRecipe = require('../models/userRecipe');
 const { uploadToR2, deleteFromR2 } = require('../services/R2cloudflare');
 const multer = require('multer');
 const { checkPremiumStatus } = require('../middlewares/checkPremium');
@@ -189,8 +190,13 @@ router.post('/myrecipes', async (req, res) => {
       .filter(r => !categorie || r.categorie.toLowerCase() === categorie.toLowerCase())
       // 5) Filtre par temps de préparation (facultatif)
       .filter(r => !maxTemps || r.temps_preparation === maxTemps)
-      // 6) Tri par pourcentage décroissant
-      .sort((a, b) => b.pourcentageCompatibilite - a.pourcentageCompatibilite)
+      // 6) Tri par pourcentage décroissant — mélange aléatoire si tous les scores sont à 0
+      // (garde-manger vide ou mode anonyme) pour varier l'ordre à chaque chargement
+      .sort((a, b) => {
+        if (a.pourcentageCompatibilite !== b.pourcentageCompatibilite)
+          return b.pourcentageCompatibilite - a.pourcentageCompatibilite;
+        return Math.random() - 0.5;
+      })
 
 
     // On slice le tableau pour la pagination
@@ -285,7 +291,7 @@ router.post('/submit', async (req, res) => {
 });
 
 
-// route pour retrouver toutes les recettes que l utilisateur a proposé (utiliser dans MySharedRecipesScreen.js)
+// route pour retrouver toutes les recettes que l utilisateur a proposé 
 router.get('/my-recipes', async (req, res) => {
   try {
     const userId = req.user._id;
@@ -371,5 +377,220 @@ router.delete('/delete/:idRecipe', checkRole('admin'), async (req, res) => {
   }
 });
 
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RECETTES PERSONNELLES — collection "userrecipes" (séparée du catalogue)
+   Stocke les recettes scannées, importées ou saisies manuellement par l'utilisateur.
+───────────────────────────────────────────────────────────────────────────── */
+
+// GET /recipe/personal — récupère toutes les recettes personnelles de l'utilisateur
+router.get('/personal', async (req, res) => {
+  try {
+    const recipes = await UserRecipe.find({ userId: req.user._id }).sort({ createdAt: -1 });
+    res.json({ result: true, recipes });
+  } catch (err) {
+    res.status(500).json({ result: false, error: err.message });
+  }
+});
+
+// POST /recipe/personal — sauvegarde une recette personnelle (scan, import URL, manuelle)
+router.post('/personal', async (req, res) => {
+  try {
+    const { titre, ingredients, instructions, image, categorie, langue, temps_preparation, portion, source, sourceUrl } = req.body;
+
+    if (!titre || !titre.trim()) {
+      return res.status(400).json({ result: false, message: 'Le titre est requis.' });
+    }
+
+    const recipe = new UserRecipe({
+      userId: req.user._id,
+      titre: titre.trim(),
+      ingredients: ingredients || [],
+      instructions: instructions || [],
+      image: image || '',
+      categorie: categorie || 'autre',
+      langue: langue || 'fr',
+      temps_preparation: temps_preparation || null,
+      portion: portion || null,
+      source: source || 'manual',
+      sourceUrl: sourceUrl || '',
+    });
+
+    await recipe.save();
+    res.json({ result: true, message: 'Recette sauvegardée.', recipe });
+  } catch (err) {
+    res.status(500).json({ result: false, error: err.message });
+  }
+});
+
+// PATCH /recipe/personal/:id/image — met à jour uniquement l'image d'une recette personnelle
+// PATCH = modification partielle (contrairement à PUT qui remplace tout le document)
+// On n'envoie que le champ "image", le reste de la recette est inchangé
+router.patch('/personal/:id/image', async (req, res) => {
+  try {
+    const { image } = req.body;
+    if (!image) return res.status(400).json({ result: false, message: 'URL image manquante.' });
+
+    const recipe = await UserRecipe.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user._id },
+      { $set: { image } },
+      { new: true }
+    );
+    if (!recipe) return res.status(404).json({ result: false, message: 'Recette introuvable.' });
+    res.json({ result: true, recipe });
+  } catch (err) {
+    res.status(500).json({ result: false, error: err.message });
+  }
+});
+
+// DELETE /recipe/personal/:id — supprime une recette personnelle
+// Si la recette a une image stockée sur R2 (premium), elle est aussi supprimée de Cloudflare
+router.delete('/personal/:id', async (req, res) => {
+  try {
+    const recipe = await UserRecipe.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
+    if (!recipe) return res.status(404).json({ result: false, message: 'Recette introuvable.' });
+
+    // Supprime l'image R2 si elle existe (URL contient le domaine R2 public)
+    if (recipe.image && process.env.R2_PUBLIC_BASE && recipe.image.includes(process.env.R2_PUBLIC_BASE)) {
+      try {
+        const key = recipe.image.replace(`${process.env.R2_PUBLIC_BASE}/`, '');
+        await deleteFromR2(key);
+      } catch (e) {
+        console.error('⚠️ Échec suppression image R2 recette:', e.message);
+        // On ne bloque pas la suppression de la recette si R2 échoue
+      }
+    }
+
+    res.json({ result: true, message: 'Recette supprimée.' });
+  } catch (err) {
+    res.status(500).json({ result: false, error: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POST /recipe/generate — Génération IA d'une recette depuis le stock utilisateur
+   Gemini invente une recette originale — aucune copie de source externe.
+───────────────────────────────────────────────────────────────────────────── */
+router.post('/generate', async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('myproducts');
+    if (!user) return res.status(404).json({ result: false, error: 'Utilisateur introuvable.' });
+
+    if (!user.myproducts.length) {
+      return res.status(400).json({
+        result: false,
+        error: 'Votre garde-manger est vide. Ajoutez des produits pour générer une recette.',
+      });
+    }
+
+    const recipe = await generateRecipeFromStock(user.myproducts);
+
+    // Gemini signale que le stock ne contient pas assez d'aliments valides
+    if (recipe.erreur === 'stock_invalide') {
+      return res.status(400).json({
+        result: false,
+        error: 'Votre garde-manger ne contient pas assez d\'aliments reconnus. Ajoutez de vrais produits alimentaires pour générer une recette.',
+      });
+    }
+
+    res.json({ result: true, recipe });
+  } catch (err) {
+    console.error('❌ [POST /recipe/generate]', err.message);
+    res.status(500).json({ result: false, error: "Erreur lors de la génération de la recette." });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POST /recipe/scan  — Extraction IA d'une recette depuis une photo (Gemini Vision)
+   body: { image: string (base64), mimeType: string }
+   Accessible aux utilisateurs connectés uniquement.
+───────────────────────────────────────────────────────────────────────────── */
+const { extractRecipeFromImage, generateRecipeFromStock } = require('../services/recipeAI');
+
+router.post('/scan', async (req, res) => {
+  try {
+    const { image, mimeType } = req.body;
+
+    if (!image) {
+      return res.status(400).json({ result: false, error: 'Image base64 manquante.' });
+    }
+
+    const recipe = await extractRecipeFromImage(image, mimeType || 'image/jpeg');
+
+    // Si Gemini ne reconnaît pas de recette dans l'image
+    if (!recipe.titre && recipe.confidence === 0) {
+      return res.status(422).json({
+        result: false,
+        error: "Aucune recette détectée. Essaie avec une image plus nette.",
+      });
+    }
+
+    res.json({ result: true, recipe });
+  } catch (err) {
+    console.error('❌ [POST /recipe/scan]', err.message);
+    res.status(500).json({ result: false, error: "Erreur lors de l'extraction de la recette." });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POST /recipe/import-url  — Import d'une recette depuis une URL (Marmiton, 750g…)
+   body: { url: string }
+   Accessible à tous (optionalAuth).
+───────────────────────────────────────────────────────────────────────────── */
+const { extractRecipeFromUrl } = require('../services/recipeAI');
+
+router.post('/import-url', async (req, res) => {
+  try {
+    const { url } = req.body;
+
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ result: false, error: 'URL manquante.' });
+    }
+
+    // Validation basique de l'URL
+    try {
+      new URL(url);
+    } catch {
+      return res.status(400).json({ result: false, error: 'URL invalide.' });
+    }
+
+    const recipe = await extractRecipeFromUrl(url);
+
+    // Si Gemini ne détecte aucune recette dans la page
+    if (!recipe.titre && recipe.confidence === 0) {
+      return res.status(422).json({
+        result: false,
+        error: "Aucune recette détectée sur cette page. Vérifie que l'URL pointe vers une recette.",
+      });
+    }
+
+    res.json({ result: true, recipe });
+  } catch (err) {
+    console.error('❌ [POST /recipe/import-url]', err.message);
+
+    // Erreurs réseau (URL inaccessible, timeout…)
+    if (err.name === 'AbortError' || err.message?.includes('HTTP')) {
+      return res.status(422).json({
+        result: false,
+        error: "Impossible d'accéder à cette page. Vérifie l'URL ou essaie avec une autre.",
+      });
+    }
+
+    res.status(500).json({ result: false, error: "Erreur lors de l'import de la recette." });
+  }
+});
+
+// Récupère une recette du catalogue par son ID.
+// Fallback utilisé par la fiche détail quand la recette n'est dans aucun cache
+// (favoris retirés, deep link, réinstall de l'app).
+router.get('/:id', async (req, res) => {
+  try {
+    const recipe = await Recipes.findById(req.params.id);
+    if (!recipe) return res.status(404).json({ result: false, error: 'Recette introuvable.' });
+    res.json(recipe);
+  } catch (err) {
+    res.status(500).json({ result: false, error: err.message });
+  }
+});
 
 module.exports = router

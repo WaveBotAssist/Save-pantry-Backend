@@ -15,7 +15,7 @@ function formatNamesShort(names) {
 }
 
 // --- Cron ---
-cron.schedule('0 * * * *', async () => {
+cron.schedule('* * * * *', async () => {
   console.log("📅 Vérification des dates de péremption et envoi des notifications...");
   try {
 

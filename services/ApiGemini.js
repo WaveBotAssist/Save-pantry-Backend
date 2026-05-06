@@ -19,10 +19,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-const { GoogleGenAI } = require('@google/genai');
-
-// Initialisation du client Gemini avec la clé API depuis les variables d'environnement
-const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
+const { callGemini, GEMINI_MODELS } = require('../config/geminiClient');
 
 /**
  * Analyse le texte OCR d'un ticket de caisse et extrait les produits alimentaires.
@@ -108,34 +105,14 @@ date: YYYY-MM-DD. total: copy from TOTAL/A payer only, never calculate. currency
 OCR TEXT:
 ${ocrText}`;
 
-  let response;
   try {
-    response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-lite',
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: prompt }],
-        },
-      ],
-      config: {
-        temperature: 0.1,       // Faible température = réponses déterministes et précises
-        maxOutputTokens: 2000,  // Suffisant pour un ticket avec ~50 produits
-        responseMimeType: 'application/json', // Force Gemini à retourner du JSON pur
-        thinkingConfig: {
-          thinkingBudget: 0,  // Désactive le thinking — inutile pour extraction structurée
-        },
-      },
+    return await callGemini({
+      model:  GEMINI_MODELS.flashLite,
+      prompt,
+      config: { temperature: 0.1, maxOutputTokens: 2000 },
     });
   } catch (err) {
     throw new Error(`Gemini API error: ${err.message}`);
-  }
-
-  try {
-    // response.text est déjà une string JSON grâce à responseMimeType
-    return JSON.parse(response.text);
-  } catch (err) {
-    throw new Error(`Gemini returned invalid JSON: ${err.message}`);
   }
 }
 

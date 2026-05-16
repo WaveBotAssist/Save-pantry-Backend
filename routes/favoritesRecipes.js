@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/users');
+const { calculerCompatibilite } = require('../services/compatibilityService');
 
 // ✅ Ajouter une recette aux favoris
 router.post('/add', async (req, res) => {
@@ -29,11 +30,27 @@ router.delete('/remove/:recipeId', async (req, res) => {
   }
 });
 
-// ✅ Obtenir la liste des recettes favorites (avec les détails)
+// ✅ Obtenir la liste des recettes favorites avec leur compatibilité garde-manger
 router.get('/list', async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).populate('favorites');
-    res.json({ success: true, favorites: user.favorites });
+    const user = await User.findById(req.user._id)
+      .populate('favorites')
+      .select('favorites myproducts');
+
+    // Enrichit chaque favori avec son score de compatibilité
+    const favorites = (user.favorites ?? []).map(recette => {
+      const { ingredientsManquants, pourcentageCompatibilite, score } =
+        calculerCompatibilite(recette, user.myproducts ?? []);
+
+      return {
+        ...recette.toObject(),
+        ingredientsManquants,
+        pourcentageCompatibilite,
+        score,
+      };
+    });
+
+    res.json({ success: true, favorites });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

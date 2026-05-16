@@ -92,6 +92,12 @@ router.post('/create-and-share', async (req, res) => {
 
     const io = req.app.get("io");
     await emitListUpdated(io, newList._id);
+    // Notifie chaque membre partagé (sauf le propriétaire) via sa room personnelle
+    for (const member of sharedWithCleaned) {
+      if (!member.userId.equals(owner._id)) {
+        io.to(`user-${member.userId}`).emit("list-shared", { listId: newList._id });
+      }
+    }
 
     // 🔔 Notifications
     const sharedUserIds = sharedWithCleaned.map(u => u.userId);
@@ -234,8 +240,6 @@ router.delete('/deleteItem', async (req, res) => {
 });
 
 
-// Modifier le "checked" d’un item dans une liste
-
 /**
  * Met à jour la quantité d'un article dans une liste partagée.
  * Broadcast la liste complète mise à jour via Socket.IO.
@@ -357,5 +361,152 @@ router.delete('/deleteAllLists', async (req, res) => {
   }
 });
 
+
+// Ajouter un article à une liste existante sans la supprimer/recréer.
+// Préserve le propriétaire et les membres partagés — évite les notifications parasites.
+router.post('/:id/addItem', async (req, res) => {
+  const { name, quantity, unit } = req.body;
+  const userId = req.user._id;
+
+  try {
+    const list = await ShoppingList.findOne({
+      _id: req.params.id,
+      $or: [
+        { ownerId: userId },
+        { sharedWith: { $elemMatch: { userId, canEdit: true } } }
+      ]
+    });
+
+    if (!list) return res.status(403).json({ success: false, message: "Accès refusé." });
+
+    list.items.push({ name, quantity, unit, checked: false });
+    await list.save();
+
+    const io = req.app.get("io");
+    await emitListUpdated(io, list._id);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Ajouter plusieurs articles à une liste existante en une seule requête.
+// Même logique que addItem — ne supprime pas la liste, préserve propriétaire et membres.
+router.post('/:id/addItems', async (req, res) => {
+  const { items } = req.body;
+  const userId = req.user._id;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ success: false, message: "items requis." });
+  }
+
+  try {
+    const list = await ShoppingList.findOne({
+      _id: req.params.id,
+      $or: [
+        { ownerId: userId },
+        { sharedWith: { $elemMatch: { userId, canEdit: true } } }
+      ]
+    });
+
+    if (!list) return res.status(403).json({ success: false, message: "Accès refusé." });
+
+    for (const item of items) {
+      list.items.push({ name: item.name, quantity: item.quantity, unit: item.unit, checked: false });
+    }
+    await list.save();
+
+    const io = req.app.get("io");
+    await emitListUpdated(io, list._id);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Ajouter un membre à une liste existante (propriétaire uniquement)
+// Évite de supprimer/recréer la liste ce qui casserait les rooms socket actives.
+router.post('/:id/addMember', async (req, res) => {
+  const { username } = req.body;
+  const ownerId = req.user._id;
+
+  try {
+    const list = await ShoppingList.findOne({ _id: req.params.id, ownerId });
+    if (!list) return res.status(403).json({ success: false, message: "Accès refusé." });
+
+    const user = await User.findOne({
+      username: { $regex: new RegExp(`^${username.trim()}$`, 'i') },
+    });
+    if (!user) return res.status(404).json({ success: false, usersNotFound: [username] });
+
+    // Self-share et doublons ignorés silencieusement
+    const isSelf    = user._id.equals(ownerId);
+    const duplicate = list.sharedWith.some(s => s.userId.equals(user._id));
+
+    if (!isSelf && !duplicate) {
+      list.sharedWith.push({ userId: user._id, username: user.username, canEdit: true, hasSeen: false });
+      await list.save();
+
+      const io = req.app.get("io");
+      await emitListUpdated(io, list._id);
+      // Notifie le nouveau membre via sa room personnelle pour qu'il recharge sa liste
+      io.to(`user-${user._id}`).emit("list-shared", { listId: list._id });
+
+      // 🔔 Notification push au nouveau membre
+      const userData = await User.findById(user._id)
+        .select('tokenpush notificationSettings language');
+
+      if (userData?.tokenpush && userData?.notificationSettings?.share?.enabled) {
+        const owner = await User.findById(ownerId).select('username');
+        const lang  = userData.language || 'fr';
+        i18next.changeLanguage(lang);
+
+        setTimeout(() => {
+          const chunks = expo.chunkPushNotifications([{
+            to:    userData.tokenpush,
+            sound: 'default',
+            title: 'Save Pantry',
+            body:  `${i18next.t('receptionlist')} ${owner?.username ?? ''}`,
+            data:  { screen: 'ShoppingList', listId: list._id.toString() },
+          }]);
+          chunks.forEach(chunk =>
+            expo.sendPushNotificationsAsync(chunk)
+              .catch(err => console.error('❌ Notif addMember:', err))
+          );
+        }, 1000);
+      }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Retirer un membre d'une liste (propriétaire uniquement)
+router.delete('/:id/removeMember', async (req, res) => {
+  const { userId } = req.body;
+  const ownerId = req.user._id;
+
+  try {
+    const list = await ShoppingList.findOne({ _id: req.params.id, ownerId });
+    if (!list) return res.status(403).json({ success: false, message: "Accès refusé." });
+
+    list.sharedWith = list.sharedWith.filter(s => !s.userId.equals(userId));
+    await list.save();
+
+    const io = req.app.get("io");
+    await emitListUpdated(io, list._id);
+    // Notifie le membre retiré via sa room personnelle pour qu'il quitte la room
+    // et vide son cache — il ne doit plus voir ni recevoir les mises à jour de cette liste
+    io.to(`user-${userId}`).emit("removed-from-list", { listId: list._id });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 module.exports = router

@@ -61,6 +61,14 @@ io.on('connection', (socket) => {
     rooms.forEach(room => socket.leave(room));
     console.log(`🚪 ${socket.id} quitte toutes les rooms listes`);
   });
+  // Room personnelle — notifie l'utilisateur quand quelqu'un lui partage une liste
+  socket.on("join-user", (userId) => {
+    socket.join(`user-${userId}`);
+  });
+  socket.on("leave-user", (userId) => {
+    socket.leave(`user-${userId}`);
+  });
+
   // ajouté les 2 socket pour le planning
   socket.on("join-planning", userId => {
     socket.join(`planning-${userId}`);

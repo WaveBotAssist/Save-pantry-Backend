@@ -12,8 +12,8 @@ const { callGemini, GEMINI_MODELS } = require('../config/geminiClient');
 
 async function extractRecipeFromImage(base64Image, mimeType = 'image/jpeg') {
   return callGemini({
-    model:  GEMINI_MODELS.flash,
-    image:  { data: base64Image, mimeType },
+    model: GEMINI_MODELS.flash,
+    image: { data: base64Image, mimeType },
     prompt: `Analyse cette image de recette et extrais les informations. JSON uniquement, aucun texte avant ou après.
 
 Format attendu :
@@ -43,57 +43,105 @@ Règles :
 // ─── Extraction depuis une URL ────────────────────────────────────────────────
 
 async function extractRecipeFromUrl(url) {
+  const cheerio = require("cheerio");//Cheerio Librairie JavaScript qui permet de lire et manipuler du HTML très facilement
   const fetch = require('node-fetch');
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
+
+  const controller = new AbortController();//API JavaScript qui permet d’annuler une requête asynchrone
+  const timeout = setTimeout(() => controller.abort(), 10_000);// Après 10 secondes le fetch est stoppé
 
   let html;
   try {
     const res = await fetch(url, {
-      signal: controller.signal,
+      signal: controller.signal, //écoute ce signal
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; SavePantryBot/1.0)',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate',
       },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status} — impossible d'accéder à la page.`);
     html = await res.text();
+
   } finally {
     clearTimeout(timeout);
   }
+  // Cherche la balise og:image dans le HTML brut grace a cheerio
+  const $ = cheerio.load(html);//$ devient une fonction pour naviguer dans le HTML Exactement comme document.querySelector
 
-  const text = html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s{2,}/g, ' ')
+  const image =
+  $('meta[property="og:image"]').attr("content") //.text() lire le text .attr() lire l attribut
+  ||
+    $('meta[property="og:image:url"]').attr('content') ||
+    // Twitter card
+    $('meta[name="twitter:image"]').attr('content') ||
+    $('meta[name="twitter:image:src"]').attr('content') ||
+   // Certains sites utilisent name au lieu de property
+    $('meta[name="og:image"]').attr('content') ||
+   // Schema.org
+    $('meta[itemprop="image"]').attr('content')
+  ||
+   // Lien image_src (ancien format)
+    $('link[rel="image_src"]').attr('href') ||
+   // Première grande image dans le contenu
+  (fallback)
+    $('article img, .recipe img, mainimg').first().attr('src') ||
+   null;
+
+
+  $("script").remove(); //supprime les script
+  $("style").remove(); // supprime les styles
+
+  const text = $("body")
+    .text()
+    .replace(/\s+/g, " ")
     .trim()
     .slice(0, 12_000);
 
   if (text.length < 100) throw new Error("La page ne contient pas assez de contenu textuel.");
 
   return callGemini({
-    model:  GEMINI_MODELS.flashLite,
+    model: GEMINI_MODELS.flashLite,
     prompt: `Voici le contenu texte d'une page web. Extrais la recette si elle est présente. JSON uniquement.
 
 Format attendu :
 {
   "titre": "Nom de la recette",
+  "image": ${image}
   "ingredients": [
     { "name": "Farine", "quantity": "200", "unit": "g" }
   ],
   "instructions": ["Étape 1...", "Étape 2..."],
   "temps_preparation": 30,
   "portion": 4,
-  "confidence": 0.95
-}
+  "confidence": 0.95,
+  "categorie": "Plat principal"
+  }
 
 Règles :
 - Extrais UNIQUEMENT les données de la recette, ignore publicité et navigation
 - temps_preparation en minutes (null si absent), portion en personnes (null si absent)
 - confidence : 0 si aucune recette, 1 si recette complète
 - Si aucune recette : { "titre": "", "ingredients": [], "instructions": [], "confidence": 0 }
+- Attribue une categorie correspondante à la recette pour la clé categorie avec une des valeur suivantes
+  "Petit-déjeuner",
+  "Brunch",
+  "Entrée",
+  "Plat principal",
+  "Viande",
+  "Pates",
+  "Riz",
+  "Salade",
+  "Soupe",
+  "Dessert",
+  "Collation",
+  "Apéritif",
+  "Déjeuner",
+  "Dîner",
+  "Boisson",
+  "Autre",
+  "Entrée"
 
 Contenu de la page :
 ${text}`,
@@ -119,8 +167,8 @@ async function generateWeeklyPlan(expiringProducts, otherProducts, recipes, week
   // Liste des produits expirants — priorité absolue dans le planning
   const expiringList = expiringProducts.length > 0
     ? expiringProducts.map(p =>
-        `- ${p.name} (${p.quantite} ${p.unit}, expire le ${new Date(p.expiration).toLocaleDateString('fr-FR')})`
-      ).join('\n')
+      `- ${p.name} (${p.quantite} ${p.unit}, expire le ${new Date(p.expiration).toLocaleDateString('fr-FR')})`
+    ).join('\n')
     : 'Aucun produit expirant dans les 3 prochains jours';
 
   // Reste du stock — utilisé librement pour les autres jours
@@ -131,16 +179,16 @@ async function generateWeeklyPlan(expiringProducts, otherProducts, recipes, week
   // Recettes disponibles avec leurs ingrédients principaux
   const recipeList = recipes.length > 0
     ? recipes.map(r => {
-        const ingredNames = (r.ingredients ?? []).slice(0, 5)
-          .map(i => (typeof i === 'string' ? i : i.name))
-          .filter(Boolean)
-          .join(', ');
-        return `- ID:${r._id} | ${r.titre} (${ingredNames})`;
-      }).join('\n')
+      const ingredNames = (r.ingredients ?? []).slice(0, 5)
+        .map(i => (typeof i === 'string' ? i : i.name))
+        .filter(Boolean)
+        .join(', ');
+      return `- ID:${r._id} | ${r.titre} (${ingredNames})`;
+    }).join('\n')
     : 'Aucune recette enregistrée';
 
   return callGemini({
-    model:  GEMINI_MODELS.flashLite,
+    model: GEMINI_MODELS.flashLite,
     prompt: `Tu es un assistant de planification de repas anti-gaspillage.
 
 PRODUITS EXPIRANTS (≤ 3 jours) — priorité absolue :
@@ -193,7 +241,7 @@ async function generateRecipeFromStock(products) {
     : 'Garde-manger vide';
 
   return callGemini({
-    model:  GEMINI_MODELS.flashLite,
+    model: GEMINI_MODELS.flashLite,
     prompt: `Tu es un chef cuisinier expert. À partir du garde-manger ci-dessous, propose une vraie recette de cuisine reconnue et délicieuse qui utilise au maximum les ingrédients disponibles.
 
 GARDE-MANGER DISPONIBLE :

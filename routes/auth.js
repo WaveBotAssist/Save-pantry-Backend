@@ -466,7 +466,7 @@ router.post('/email/verify/confirm-otp', async (req, res) => {
 });
 
 
-// ajouter pour connecter nouveau utilisateur avec google
+// connecter nouveau utilisateur avec google
 router.post('/google', async (req, res) => {
   try {
     const { idToken, deviceId } = req.body;

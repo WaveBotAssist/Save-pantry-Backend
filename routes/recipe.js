@@ -5,6 +5,7 @@ const User = require('../models/users');
 const Recipes = require('../models/recipe');
 const UserRecipe = require('../models/userRecipe');
 const { uploadToR2, deleteFromR2 } = require('../services/R2cloudflare');
+const { calculerCompatibilite } = require('../services/compatibilityService');
 const multer = require('multer');
 const { checkPremiumStatus } = require('../middlewares/checkPremium');
 
@@ -61,47 +62,15 @@ router.post('/myrecipes', async (req, res) => {
     const limit = parseInt(req.query.limit) || 30;
     const skip = (page - 1) * limit;
 
-    // 🔧 Utilitaires (utilisés avec ou sans compte)
-    const motsAExclure = new Set([
-      "un", "une", "des", "le", "la", "les", "du", "de", "d", "à", "avec", "et",
-      "au", "en", "quelques", "peu", "pour", "par", "sur", "dans", "g", "kg",
-      "ml", "l", "cl", "cuillère", "cuillere", "soupe", "cafe", "pincee",
-      "tranche", "verre", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
-    ]);
-
-    const singulariser = mot => {
-      if (mot.length <= 3) return mot;
-      return mot.endsWith("s") || mot.endsWith("x")
-        ? mot.slice(0, -1)
-        : mot;
-    };
-
-    // 🔍 Extraction du stock utilisateur — vide en mode anonyme (req.user = null)
-    let ingredientsDispo = [];
+    // 🔍 Produits du garde-manger — vide en mode anonyme (req.user = null)
+    let myproducts = [];
 
     if (req.user) {
       const user = await User.findOne({ _id: req.user._id }, { myproducts: 1 });
       if (!user)
         return res.status(404).json({ result: false, error: "Utilisateur introuvable" });
 
-      const normalize = str =>
-        str
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .replace(/œ/g, "oe")
-          .toLowerCase();
-
-      const extraireMotsUtiles = texte =>
-        normalize(texte)
-          .split(/\s+/)
-          .filter(mot =>
-            mot.length > 2 &&
-            !motsAExclure.has(mot) &&
-            !/\d/.test(mot)
-          )
-          .map(singulariser);
-
-      ingredientsDispo = user.myproducts.flatMap(p => extraireMotsUtiles(p.name));
+      myproducts = user.myproducts;
     }
 
 
@@ -140,48 +109,14 @@ router.post('/myrecipes', async (req, res) => {
 
 
     const recettesCompatibles = recettes.map(recette => {
-      // 1) On découpe chaque ingrédient de la recette sur la virgule
-      const sousIngredients = recette.ingredients.map(ing => ing.trim()).filter(Boolean);
-
-      // 2) Pour chacun des sous-ingrédients, on extrait les mots utiles
-      //    (sans chiffres, sans ponctuation), on singularise, et, si un mot manque,
-      //    alors on marque le sous-ingrédient comme manquant.
-      const ingredientsManquants = sousIngredients.filter(sousIng => {
-        // a) Nettoyage complet de la chaîne (accents, ponctuation)
-        const nettoye = sousIng
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .replace(/œ/g, "oe")
-          .toLowerCase()
-          .replace(/[^a-z0-9\s]+/g, " "); // retire virgules, points, etc.
-
-        // b) Extraction des mots utiles
-        const motsUtiles = nettoye
-          .split(/\s+/)
-          .filter(mot =>
-            mot.length > 2 &&
-            !motsAExclure.has(mot) &&
-            !/\d/.test(mot)
-          )
-          .map(singulariser);
-
-        // c) Si AU MOINS un mot utile n'est pas en stock ⇒ sous-ingrédient manquant
-        return motsUtiles.every(mot => !ingredientsDispo.includes(mot))
-      });
-
-      const totalIngredients = sousIngredients.length;
-      const nbManquants = ingredientsManquants.length;
-      const score = totalIngredients - nbManquants;
-      const pourcentageCompatibilite = totalIngredients > 0
-        ? Math.round((score / totalIngredients) * 100)
-        : 0;
-
+      const { ingredientsManquants, pourcentageCompatibilite, score } =
+        calculerCompatibilite(recette, myproducts);
       return {
         ...recette.toObject(),
-        id: recette._id.toString(), //  ici on garantit une clé unique
+        id: recette._id.toString(),
         ingredientsManquants,
         score,
-        pourcentageCompatibilite
+        pourcentageCompatibilite,
       };
     })
       // 3) On filtre par nombre max d'ingrédients manquants
@@ -423,6 +358,23 @@ router.post('/personal', async (req, res) => {
   }
 });
 
+// PATCH /recipe/personal/:id/category — met à jour uniquement la catégorie d'une recette personnelle
+router.patch('/personal/:id/category', async (req, res) => {
+  try {
+    const { categorie } = req.body;
+    if (!categorie) return res.status(400).json({ result: false, message: 'Catégorie manquante.' });
+    const recipe = await UserRecipe.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user._id },
+      { $set: { categorie } },
+      { new: true }
+    );
+    if (!recipe) return res.status(404).json({ result: false, message: 'Recette introuvable.' });
+    res.json({ result: true, recipe });
+  } catch (err) {
+    res.status(500).json({ result: false, error: err.message });
+  }
+});
+
 // PATCH /recipe/personal/:id/image — met à jour uniquement l'image d'une recette personnelle
 // PATCH = modification partielle (contrairement à PUT qui remplace tout le document)
 // On n'envoie que le champ "image", le reste de la recette est inchangé
@@ -555,8 +507,8 @@ router.post('/import-url', async (req, res) => {
     }
 
     const recipe = await extractRecipeFromUrl(url);
-
-    // Si Gemini ne détecte aucune recette dans la page
+  
+    // Gemini n'a pas trouvé de recette dans la page
     if (!recipe.titre && recipe.confidence === 0) {
       return res.status(422).json({
         result: false,
@@ -568,15 +520,30 @@ router.post('/import-url', async (req, res) => {
   } catch (err) {
     console.error('❌ [POST /recipe/import-url]', err.message);
 
-    // Erreurs réseau (URL inaccessible, timeout…)
-    if (err.name === 'AbortError' || err.message?.includes('HTTP')) {
+    // Timeout du fetch (AbortController déclenché après 10s)
+    if (err.name === 'AbortError') {
+      return res.status(422).json({
+        result: false,
+        error: "La page a mis trop de temps à répondre. Essaie avec une autre URL.",
+      });
+    }
+
+    // Site inaccessible (HTTP 4xx/5xx, DNS, SSL...)
+    if (
+      err.message?.includes('HTTP') ||
+      err.message?.includes('ENOTFOUND') ||
+      err.message?.includes('ECONNREFUSED') ||
+      err.message?.includes('certificate') ||
+      err.code === 'ENOTFOUND' ||
+      err.code === 'ECONNREFUSED'
+    ) {
       return res.status(422).json({
         result: false,
         error: "Impossible d'accéder à cette page. Vérifie l'URL ou essaie avec une autre.",
       });
     }
 
-    res.status(500).json({ result: false, error: "Erreur lors de l'import de la recette." });
+    res.status(500).json({ result: false, error: "Erreur lors de l'import. Réessaie dans quelques secondes." });
   }
 });
 

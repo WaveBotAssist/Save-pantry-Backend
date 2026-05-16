@@ -41,7 +41,17 @@ async function callGemini({ model, prompt, image, config = {} }, attempt = 1) {
       contents: [{ role: 'user', parts }],
       config:   { ...BASE_CONFIG, ...config },
     });
-    return JSON.parse(response.text);
+    // response.text est undefined avec gemini-2.5-flash quand la réponse contient
+    // des parties "thinking" — on filtre ces parties et on prend le texte restant
+    const text =
+      response.text ??
+      response.candidates?.[0]?.content?.parts
+        ?.filter((p) => !p.thought && p.text)
+        ?.map((p) => p.text)
+        ?.join('');
+
+    if (!text) throw new Error(`Réponse Gemini vide (model: ${model})`);
+    return JSON.parse(text);
   } catch (err) {
     // Retry sur surcharge (503) ou erreur réseau temporaire — max 3 tentatives
     const is503 = err?.code === 503 || err?.status === 'UNAVAILABLE' || err?.message?.includes('503');

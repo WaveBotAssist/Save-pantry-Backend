@@ -25,15 +25,17 @@ Format attendu :
   "instructions": ["Étape 1 détaillée...", "Étape 2..."],
   "temps_preparation": 30,
   "portion": 4,
+  "categorie": "Plat principal",
   "confidence": 0.95
 }
 
 Règles :
 - titre : nom principal de la recette
-- ingredients : chaque ingrédient avec sa quantité et son unité
+- ingredients : TOUS les ingrédients avec quantité et unité. Si la liste n'est pas visible mais que les instructions les mentionnent, déduis-les depuis le texte des étapes. Ne laisse jamais ce tableau vide si la recette est identifiable.
 - instructions : étapes dans l'ordre, une étape par élément
 - temps_preparation : durée totale en minutes (null si non indiqué)
 - portion : nombre de personnes (null si non indiqué)
+- categorie : une seule valeur parmi — Petit-déjeuner, Brunch, Entrée, Plat principal, Viande, Pates, Riz, Salade, Soupe, Dessert, Collation, Apéritif, Déjeuner, Dîner, Boisson, Autre
 - confidence : 0 (image illisible) → 1 (parfaitement lisible)
 - Si pas de recette : { "titre": "", "ingredients": [], "instructions": [], "confidence": 0 }`,
     config: { temperature: 0.1 },
@@ -235,35 +237,42 @@ JSON uniquement :
 
 // ─── Génération d'une recette depuis le stock ─────────────────────────────────
 
-async function generateRecipeFromStock(products) {
+async function generateRecipeFromStock(products, lang = 'fr') {
+  const langInstruction = lang === 'fr'
+    ? 'Réponds entièrement en français.'
+    : 'Respond entirely in English.';
+  const now = new Date();
+
   const pantryList = products.length > 0
-    ? products.map(p => `- ${p.name} (${p.quantite} ${p.unit})`).join('\n')
+    ? products.map(p => {
+        if (!p.expiration) return `- ${p.name}`;
+        const daysLeft = Math.ceil((new Date(p.expiration) - now) / 86_400_000);
+        if (daysLeft < 0)  return `- ${p.name} [EXPIRÉ]`;
+        if (daysLeft <= 3) return `- ${p.name} [EXPIRE DANS ${daysLeft}J]`;
+        return `- ${p.name}`;
+      }).join('\n')
     : 'Garde-manger vide';
 
   return callGemini({
     model: GEMINI_MODELS.flashLite,
-    prompt: `Tu es un chef cuisinier expert. À partir du garde-manger ci-dessous, propose une vraie recette de cuisine reconnue et délicieuse qui utilise au maximum les ingrédients disponibles.
+    prompt: `Tu es un chef cuisinier. Propose UNE recette réelle et connue (pas inventée) réalisable avec ce garde-manger.
 
-GARDE-MANGER DISPONIBLE :
+GARDE-MANGER :
 ${pantryList}
 
-ÉTAPE 1 — VALIDATION :
-Identifie uniquement les vrais aliments ou boissons comestibles dans la liste.
-Ignore tout ce qui n'est pas un aliment réel (mots inventés, objets, non-sens...).
-Si moins de 2 vrais aliments identifiés → retourne : { "erreur": "stock_invalide" }
-
-ÉTAPE 2 — SÉLECTION DE LA RECETTE (seulement si stock valide) :
-Choisis une vraie recette (plat traditionnel, classique, populaire) qui :
-- utilise en priorité les ingrédients du garde-manger
-- est savoureuse, équilibrée, réalisable par un amateur
-Tu peux compléter avec des basiques courants (sel, poivre, huile, ail, beurre...).
-Ne mélange pas des ingrédients incohérents.
+Règles :
+- Si moins de 2 vrais aliments dans la liste → retourne : { "erreur": "stock_invalide" }
+- La recette doit avoir un nom connu et reconnaissable (ex: "Omelette aux champignons", "Pâtes carbonara"). Jamais un nom inventé.
+- Utilise les ingrédients du garde-manger. Priorité aux produits marqués [EXPIRE DANS XJ] ou [EXPIRÉ] pour éviter le gaspillage, mais uniquement s'ils s'intègrent naturellement dans un vrai plat.
+- Complète avec des basiques (sel, poivre, huile, beurre…) si nécessaire.
+- Les quantités sont des quantités culinaires réelles (ex: "200" g). Jamais "pièce(s)".
 
 JSON uniquement :
 
 Format si stock valide :
 {
   "titre": "Nom de la recette",
+  "categorie": "Plat principal",
   "ingredients": [
     { "name": "Nom ingrédient", "quantity": "quantité", "unit": "unité" }
   ],
@@ -273,9 +282,13 @@ Format si stock valide :
   "confidence": 1
 }
 
+categorie — exactement une valeur parmi : Petit-déjeuner | Brunch | Entrée | Plat principal | Viande | Pates | Riz | Salade | Soupe | Dessert | Collation | Apéritif | Déjeuner | Dîner | Boisson | Autre
+
 Format si stock invalide :
-{ "erreur": "stock_invalide" }`,
-    config: { temperature: 0.7 },
+{ "erreur": "stock_invalide" }
+
+${langInstruction}`,
+    config: { temperature: 0.3 },
   });
 }
 

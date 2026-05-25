@@ -4,6 +4,8 @@ const checkToken = require('../middlewares/checkToken');
 const User = require('../models/users')
 const cron = require('node-cron');
 const fetch = require('node-fetch')
+const ScannerQuota = require('../models/scannerQuota');
+const { checkPremiumStatus } = require('../middlewares/checkPremium');
 
 
 const updateProductPrice = require('../modules/updateProductPrice')
@@ -236,6 +238,101 @@ cron.schedule("0 0 * * *", async () => {
 
   } catch (err) {
     console.error("❌ Erreur dans le cron job :", err.message);
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   GET /user/credits
+   Retourne les crédits IA restants pour l'utilisateur connecté.
+   Le frontend appelle cet endpoint au chargement des écrans IA pour afficher
+   le compteur "X crédits restants ce mois".
+─────────────────────────────────────────────────────────────────────────────── */
+router.get('/credits', checkToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('isPremium revenuecatId');
+    if (!user) return res.status(404).json({ result: false, error: 'Utilisateur introuvable.' });
+
+    const isPremium = await checkPremiumStatus(user);
+    if (isPremium) return res.json({ result: true, isPremium: true });
+
+    const FREE_MONTHLY_LIMIT = 10;
+    const quota = await ScannerQuota.findOne({ userId: String(req.user._id) });
+
+    // Vérifie si on est dans un nouveau mois depuis le dernier reset
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    const needsReset = quota?.resetAt && quota.resetAt < startOfMonth;
+    const used = (!quota || needsReset) ? 0 : quota.scanCount;
+
+    res.json({
+      result:    true,
+      isPremium: false,
+      used,
+      limit:     FREE_MONTHLY_LIMIT,
+      remaining: Math.max(0, FREE_MONTHLY_LIMIT - used),
+    });
+  } catch (err) {
+    console.error('❌ [GET /user/credits]', err.message);
+    res.status(500).json({ result: false, error: 'Erreur serveur.' });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POST /user/credits/migrate
+   Transfère les crédits utilisés en mode anonyme vers le compte connecté.
+   Appelé une seule fois par migrationService juste après login/register,
+   seulement si l'utilisateur avait utilisé des crédits en anonyme.
+   Body : { deviceId: string }
+─────────────────────────────────────────────────────────────────────────────── */
+router.post('/credits/migrate', checkToken, async (req, res) => {
+  try {
+    const { deviceId } = req.body;
+    if (!deviceId) return res.json({ result: true });
+
+    const userId = String(req.user._id);
+
+    // Cherche le document quota anonyme pour cet appareil
+    const anonQuota = await ScannerQuota.findOne({ deviceId, userId: null });
+    if (!anonQuota || anonQuota.scanCount === 0) return res.json({ result: true });
+
+    // Cherche le document quota du compte (peut déjà exister si l'utilisateur
+    // avait un compte et se reconnecte sur un nouvel appareil)
+    const userQuota = await ScannerQuota.findOne({ userId });
+
+    if (userQuota) {
+      // Additionne les crédits anonymes aux crédits déjà utilisés sur le compte.
+      // Exemple : 5 utilisés sur le compte + 3 anonymes = 8/10 utilisés.
+      userQuota.scanCount = userQuota.scanCount + anonQuota.scanCount;
+      userQuota.resetAt   = userQuota.resetAt ?? new Date();
+      await userQuota.save();
+    } else {
+      // Nouveau compte : le compteur démarre au nombre de crédits utilisés en anonyme.
+      // Exemple : 3 crédits anonymes utilisés → compte démarre à 3/10.
+      await ScannerQuota.create({
+        userId,
+        deviceId: null,
+        scanCount: anonQuota.scanCount,
+        resetAt:   new Date(),
+      });
+    }
+
+    // On épuise le quota anonyme de cet appareil plutôt que de le supprimer.
+    //
+    // Si on supprimait le document, le middleware aiCredits en recréerait un
+    // à scanCount=0 au premier usage anonyme → 5 crédits frais à chaque
+    // cycle déconnexion / reconnexion. C'est le comportement à éviter.
+    //
+    // En le laissant à ANON_LIMIT, le middleware voit scanCount >= ANON_LIMIT
+    // et bloque immédiatement tout usage anonyme sur cet appareil.
+    const ANON_LIMIT = 5; // doit correspondre à aiCredits.js
+    await ScannerQuota.updateOne({ _id: anonQuota._id }, { $set: { scanCount: ANON_LIMIT } });
+
+    res.json({ result: true });
+  } catch (err) {
+    console.error('❌ [POST /user/credits/migrate]', err.message);
+    res.status(500).json({ result: false, error: 'Erreur serveur.' });
   }
 });
 

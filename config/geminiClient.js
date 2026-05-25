@@ -30,17 +30,25 @@ const BASE_CONFIG = {
  * Appel Gemini unifié avec retry automatique sur les erreurs 503 (surcharge temporaire).
  * Tente jusqu'à 3 fois avec 2 secondes d'attente entre chaque essai.
  */
+// Timeout par tentative : 20s. Évite que le client mobile ferme la connexion
+// avant que le serveur réponde (provoque un "- - ms - -" dans les logs Morgan).
+const GEMINI_TIMEOUT_MS = 20_000;
+
 async function callGemini({ model, prompt, image, config = {} }, attempt = 1) {
   const parts = [];
   if (image) parts.push({ inlineData: { data: image.data, mimeType: image.mimeType } });
   parts.push({ text: prompt });
 
   try {
-    const response = await ai.models.generateContent({
+    const apiCall = ai.models.generateContent({
       model,
       contents: [{ role: 'user', parts }],
       config:   { ...BASE_CONFIG, ...config },
     });
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Gemini timeout (attempt ${attempt})`)), GEMINI_TIMEOUT_MS)
+    );
+    const response = await Promise.race([apiCall, timeout]);
     // response.text est undefined avec gemini-2.5-flash quand la réponse contient
     // des parties "thinking" — on filtre ces parties et on prend le texte restant
     const text =

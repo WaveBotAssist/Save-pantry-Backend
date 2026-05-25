@@ -37,8 +37,9 @@ router.get('/list', async (req, res) => {
       .populate('favorites')
       .select('favorites myproducts');
 
-    // Enrichit chaque favori avec son score de compatibilité
-    const favorites = (user.favorites ?? []).map(recette => {
+    // $addToSet ajoute les favoris en fin de tableau — on inverse pour avoir les plus récents en premier.
+    // Le spread [...] crée une copie pour ne pas muter le tableau Mongoose original.
+    const favorites = [...(user.favorites ?? [])].reverse().map(recette => {
       const { ingredientsManquants, pourcentageCompatibilite, score } =
         calculerCompatibilite(recette, user.myproducts ?? []);
 

@@ -52,6 +52,16 @@ const scannerQuotaSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+
+    /**
+     * Date du dernier reset mensuel.
+     * - null pour les anonymes : leur limite est permanente, jamais reset.
+     * - Date pour les utilisateurs connectés : reset automatique le 1er de chaque mois.
+     */
+    resetAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     /**

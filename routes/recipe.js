@@ -1,13 +1,16 @@
-const express = require('express')
+﻿const express = require('express')
 const router = express.Router()
+const checkToken = require('../middlewares/checkToken');
 const checkRole = require('../middlewares/checkRole');
 const User = require('../models/users');
 const Recipes = require('../models/recipe');
 const UserRecipe = require('../models/userRecipe');
 const { uploadToR2, deleteFromR2 } = require('../services/R2cloudflare');
 const { calculerCompatibilite } = require('../services/compatibilityService');
+
 const multer = require('multer');
 const { checkPremiumStatus } = require('../middlewares/checkPremium');
+const aiCredits = require('../middlewares/aiCredits');
 
 
 // Multer pour lire le fichier en RAM (pas sur disque)
@@ -19,30 +22,33 @@ const upload = multer({
 
 //ci-dessous les deux routes pour upload ou remove une image de R2 cloudflare
 // ---- UPLOAD ROUTE ----
-router.post('/r2/upload', upload.single('file'), async (req, res) => {/*upload.single('file') est un middleware de multer.
-Il sert à analyser la requête HTTP quand elle contient un fichier uploadé (de type multipart/form-data)
-et à rendre ce fichier accessible dans req.file*/
+router.post('/r2/upload', checkToken, upload.single('file'), async (req, res) => {
   try {
+    const user = await User.findById(req.user._id);
+    const isPremium = await checkPremiumStatus(user);
+    if (!isPremium) {
+      return res.status(403).json({ success: false, error: 'Compte non premium - upload R2 desactive.' });
+    }
     if (!req.file) {
-      return res.status(400).json({ success: false, error: "Aucun fichier envoyé" });
+      return res.status(400).json({ success: false, error: 'Aucun fichier envoye' });
     }
     const { url, key } = await uploadToR2(req.file.buffer, req.file.originalname, 'recipes-users');
-
-    const imageUrl = url; // URL publique de l’image
-
-    res.json({ success: true, url: imageUrl, key });
+    res.json({ success: true, url, key });
   } catch (err) {
-    console.error("Erreur upload R2:", err);
+    console.error('Erreur upload R2 recette:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-
-// route pour supprimer une image de R2 via sa clé
+// Supprime une image R2 via sa clé — réservé aux utilisateurs premium connectés
 router.delete('/r2/delete/:key', async (req, res) => {
   try {
-    const { key } = req.params;
-    await deleteFromR2(key);
+    const user = await User.findById(req.user._id);
+    const isPremium = await checkPremiumStatus(user);
+    if (!isPremium) {
+      return res.status(403).json({ success: false, error: 'Reserve aux comptes premium.' });
+    }
+    await deleteFromR2(decodeURIComponent(req.params.key));
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -165,7 +171,7 @@ router.post('/submit', async (req, res) => {
     const userId = req.user._id;
 
     // Validation de base
-    if (!image || !titre || !titre.trim() || !categorie || !Array.isArray(ingredients) || !ingredients.length ||
+    if (!titre || !titre.trim() || !categorie || !Array.isArray(ingredients) || !ingredients.length ||
       !Array.isArray(instructions) || !instructions.length) {
       return res.status(400).json({
         result: false,
@@ -194,6 +200,8 @@ router.post('/submit', async (req, res) => {
       });
     }
 
+    const imageUrl = image || '';
+
     // Création de la recette
     const newRecipe = new Recipes({
       titre,
@@ -201,7 +209,7 @@ router.post('/submit', async (req, res) => {
       langue,
       source: source || "user",
       url: url || "",
-      image: image || "",
+      image: imageUrl,
       tags: tags || [],
       ingredients,
       instructions,
@@ -337,12 +345,14 @@ router.post('/personal', async (req, res) => {
       return res.status(400).json({ result: false, message: 'Le titre est requis.' });
     }
 
+    const imageUrl = image || '';
+
     const recipe = new UserRecipe({
       userId: req.user._id,
       titre: titre.trim(),
       ingredients: ingredients || [],
       instructions: instructions || [],
-      image: image || '',
+      image: imageUrl,
       categorie: categorie || 'autre',
       langue: langue || 'fr',
       temps_preparation: temps_preparation || null,
@@ -352,6 +362,8 @@ router.post('/personal', async (req, res) => {
     });
 
     await recipe.save();
+    const io = req.app.get('io');
+    io.to(`user-${req.user._id}`).emit('recipes-updated');
     res.json({ result: true, message: 'Recette sauvegardée.', recipe });
   } catch (err) {
     res.status(500).json({ result: false, error: err.message });
@@ -369,6 +381,8 @@ router.patch('/personal/:id/category', async (req, res) => {
       { new: true }
     );
     if (!recipe) return res.status(404).json({ result: false, message: 'Recette introuvable.' });
+    const io = req.app.get('io');
+    io.to(`user-${req.user._id}`).emit('recipes-updated');
     res.json({ result: true, recipe });
   } catch (err) {
     res.status(500).json({ result: false, error: err.message });
@@ -383,14 +397,86 @@ router.patch('/personal/:id/image', async (req, res) => {
     const { image } = req.body;
     if (!image) return res.status(400).json({ result: false, message: 'URL image manquante.' });
 
-    const recipe = await UserRecipe.findOneAndUpdate(
+    // { new: false } retourne l'ancienne version pour pouvoir supprimer l'ancienne image R2
+    const oldRecipe = await UserRecipe.findOneAndUpdate(
       { _id: req.params.id, userId: req.user._id },
       { $set: { image } },
-      { new: true }
+      { new: false }
     );
-    if (!recipe) return res.status(404).json({ result: false, message: 'Recette introuvable.' });
-    res.json({ result: true, recipe });
+    if (!oldRecipe) return res.status(404).json({ result: false, message: 'Recette introuvable.' });
+
+    // Supprime l'ancienne image R2 si elle est différente de la nouvelle
+    if (
+      oldRecipe.image &&
+      process.env.R2_PUBLIC_BASE &&
+      oldRecipe.image.includes(process.env.R2_PUBLIC_BASE) &&
+      oldRecipe.image !== image
+    ) {
+      try {
+        const oldKey = oldRecipe.image.replace(`${process.env.R2_PUBLIC_BASE}/`, '');
+        await deleteFromR2(oldKey);
+      } catch (e) {
+        console.error('⚠️ Échec suppression ancienne image R2 recette:', e.message);
+      }
+    }
+
+    const io = req.app.get('io');
+    io.to(`user-${req.user._id}`).emit('recipes-updated');
+    res.json({ result: true, recipe: { ...oldRecipe.toObject(), image } });
   } catch (err) {
+    res.status(500).json({ result: false, error: err.message });
+  }
+});
+
+/**
+ * POST /recipe/personal/import
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Import groupé de recettes — utilisé exclusivement par migrateLocalData()
+ * lors de la transition anonyme → compte connecté.
+ *
+ * Utilise UserRecipe.insertMany() avec { ordered: false } pour insérer toutes
+ * les recettes en une seule opération MongoDB, sans bloquer sur les doublons.
+ * Les recettes dont le titre existe déjà sont filtrées avant l'insert.
+ *
+ * Body :
+ *   recipes  {Array}  Liste de recettes à importer (format LocalRecipe sans _id)
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+router.post('/personal/import', async (req, res) => {
+  try {
+    const { recipes } = req.body;
+    if (!Array.isArray(recipes) || recipes.length === 0) {
+      return res.status(400).json({ result: false, message: 'Tableau de recettes requis.' });
+    }
+
+    const existing = await UserRecipe.find({ userId: req.user._id }).select('titre');
+    const existingTitles = new Set(existing.map(r => r.titre.trim().toLowerCase()));
+
+    const toInsert = recipes
+      .filter(r => r.titre && r.titre.trim() && !existingTitles.has(r.titre.trim().toLowerCase()))
+      .map(({ titre, ingredients, instructions, image, categorie, langue, temps_preparation, portion, source, sourceUrl }) => ({
+        userId: req.user._id,
+        titre: titre.trim(),
+        ingredients: ingredients || [],
+        instructions: instructions || [],
+        image: image || '',
+        categorie: categorie || 'autre',
+        langue: langue || 'fr',
+        temps_preparation: temps_preparation || null,
+        portion: portion || null,
+        source: source || 'manual',
+        sourceUrl: sourceUrl || '',
+      }));
+
+    if (toInsert.length > 0) {
+      await UserRecipe.insertMany(toInsert, { ordered: false });
+      const io = req.app.get('io');
+      io.to(`user-${req.user._id}`).emit('recipes-updated');
+    }
+
+    return res.json({ result: true, added: toInsert.length });
+  } catch (err) {
+    console.error('❌ Erreur personal/bulk:', err);
     res.status(500).json({ result: false, error: err.message });
   }
 });
@@ -413,6 +499,8 @@ router.delete('/personal/:id', async (req, res) => {
       }
     }
 
+    const io = req.app.get('io');
+    io.to(`user-${req.user._id}`).emit('recipes-updated');
     res.json({ result: true, message: 'Recette supprimée.' });
   } catch (err) {
     res.status(500).json({ result: false, error: err.message });
@@ -423,34 +511,48 @@ router.delete('/personal/:id', async (req, res) => {
    POST /recipe/generate — Génération IA d'une recette depuis le stock utilisateur
    Gemini invente une recette originale — aucune copie de source externe.
 ───────────────────────────────────────────────────────────────────────────── */
-router.post('/generate', async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id).select('myproducts');
-    if (!user) return res.status(404).json({ result: false, error: 'Utilisateur introuvable.' });
+router.post('/generate', aiCredits, async (req, res) => {
+    try {
+      let products;
 
-    if (!user.myproducts.length) {
-      return res.status(400).json({
-        result: false,
-        error: 'Votre garde-manger est vide. Ajoutez des produits pour générer une recette.',
-      });
+      if (req.user) {
+        // Utilisateur connecté → on lit son garde-manger depuis la BDD
+        const user = await User.findById(req.user._id).select('myproducts');
+        if (!user) return res.status(404).json({result: false, error: 'Utilisateur introuvable.' });
+        products = user.myproducts;
+      } else {
+        // Utilisateur anonyme → les produits sont envoyés dans le body
+        products = req.body.products ?? [];
+      }
+
+      if (!products.length) {
+        return res.status(400).json({
+          result: false,
+          error: 'Votre garde-manger est vide. Ajoutez des produits pour générer une recette.',
+        });
+      }
+
+       const lang = (req.headers['accept-language'] ?? 'fr').slice(0, 2);
+      const recipe = await generateRecipeFromStock(products, lang);
+
+      // Le client peut avoir fermé la connexion pendant l'appel Gemini (timeout mobile)
+      if (res.headersSent || req.socket?.destroyed) return;
+
+      if (recipe.erreur === 'stock_invalide') {
+        return res.status(400).json({
+          result: false,
+          error: 'Votre garde-manger ne contient pas assez d\'aliments reconnus.',
+        });
+      }
+
+      res.json({ result: true, recipe });
+    } catch (err) {
+      console.error('❌ [POST/recipe/generate]', err.message);
+      if (!res.headersSent) {
+        res.status(500).json({ result: false, error: "Erreur lors de la génération de la recette." });
+      }
     }
-
-    const recipe = await generateRecipeFromStock(user.myproducts);
-
-    // Gemini signale que le stock ne contient pas assez d'aliments valides
-    if (recipe.erreur === 'stock_invalide') {
-      return res.status(400).json({
-        result: false,
-        error: 'Votre garde-manger ne contient pas assez d\'aliments reconnus. Ajoutez de vrais produits alimentaires pour générer une recette.',
-      });
-    }
-
-    res.json({ result: true, recipe });
-  } catch (err) {
-    console.error('❌ [POST /recipe/generate]', err.message);
-    res.status(500).json({ result: false, error: "Erreur lors de la génération de la recette." });
-  }
-});
+  });
 
 /* ─────────────────────────────────────────────────────────────────────────────
    POST /recipe/scan  — Extraction IA d'une recette depuis une photo (Gemini Vision)
@@ -459,7 +561,7 @@ router.post('/generate', async (req, res) => {
 ───────────────────────────────────────────────────────────────────────────── */
 const { extractRecipeFromImage, generateRecipeFromStock } = require('../services/recipeAI');
 
-router.post('/scan', async (req, res) => {
+router.post('/scan', aiCredits, async (req, res) => {
   try {
     const { image, mimeType } = req.body;
 
@@ -491,7 +593,7 @@ router.post('/scan', async (req, res) => {
 ───────────────────────────────────────────────────────────────────────────── */
 const { extractRecipeFromUrl } = require('../services/recipeAI');
 
-router.post('/import-url', async (req, res) => {
+router.post('/import-url', aiCredits, async (req, res) => {
   try {
     const { url } = req.body;
 

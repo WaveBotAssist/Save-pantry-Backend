@@ -4,6 +4,7 @@ const router = express.Router();
 const User = require('../models/users');
 const Planning = require('../models/planning');
 const { cleanPlanning } = require('../utils/cleanPlanning');
+const aiCredits = require('../middlewares/aiCredits');
 
 
 /* ------------------------------------------------------------
@@ -270,7 +271,7 @@ router.post('/inventory/undo', async (req, res) => {
 const { generateWeeklyPlan } = require('../services/recipeAI');
 const UserRecipe = require('../models/userRecipe');
 
-router.post('/generate', async (req, res) => {
+router.post('/generate', aiCredits, async (req, res) => {
   try {
     const { weekStart } = req.body;
     const userId = req.user._id;

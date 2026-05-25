@@ -43,13 +43,15 @@ et à rendre ce fichier accessible dans req.file*/
   }
 });
 
-
-// route pour supprimer une image de R2 via sa clé
+// Supprime une image R2 via sa clé — réservé aux utilisateurs premium connectés
 router.delete('/r2/delete/:key', async (req, res) => {
   try {
-
-    const { key } = req.params;
-    await deleteFromR2(key);
+    const user = await User.findById(req.user._id);
+    const isPremium = await checkPremiumStatus(user);
+    if (!isPremium) {
+      return res.status(403).json({ success: false, error: 'Reserve aux comptes premium.' });
+    }
+    await deleteFromR2(decodeURIComponent(req.params.key));
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -78,6 +80,81 @@ router.get('/openfoodfacts/:codebarre', async (req, res) => {
   }
 })
 
+
+/**
+ * POST /product/import
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Import groupé de produits — utilisé exclusivement par migrateLocalData()
+ * lors de la transition anonyme → compte connecté.
+ *
+ * Avantage par rapport à N appels /addproduct successifs :
+ *   - 1 seule requête HTTP  →  1 seul user.save()  →  1 seul événement socket
+ *   - Les produits apparaissent tous en même temps dans le garde-manger
+ *     au lieu de s'afficher un par un de façon visible et lente.
+ *
+ * Body :
+ *   products     {Array}   Liste de produits à importer (format LocalProduct sans _id)
+ *   isMigration  {boolean} Si true → la limite 50 produits non-premium est ignorée
+ *
+ * Comportement :
+ *   - Les produits sans nom sont ignorés silencieusement.
+ *   - Les doublons (même name déjà dans myproducts) sont ignorés silencieusement.
+ *   - Si aucun produit valide → réponse 200 sans écriture en base.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+router.post('/import', async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { products, isMigration } = req.body;
+
+    if (!Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({ result: false, message: 'Tableau de produits requis.' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ result: false, message: 'Utilisateur introuvable.' });
+
+    const isPremium = await checkPremiumStatus(user);
+    const existingNames = new Set(user.myproducts.map(p => p.name));
+
+    let added = 0;
+    for (const product of products) {
+      const { name, codebarre, image, categorie, prix, currency, unit, expiration, emplacement, quantite, calorie, magasin, nutriments } = product;
+      if (!name || name.trim() === '') continue;
+      if (existingNames.has(name)) continue;
+      if (!isMigration && !isPremium && user.myproducts.length + added >= 50) break;
+
+      user.myproducts.push({
+        codebarre: codebarre || null,
+        image,
+        name,
+        magasin,
+        categorie,
+        expiration,
+        emplacement,
+        quantite,
+        prix,
+        currency,
+        calorie,
+        unit,
+        nutriments: nutriments || null,
+      });
+      existingNames.add(name);
+      added++;
+    }
+
+    if (added > 0) {
+      await user.save();
+      const io = req.app.get('io');
+      io.to(`user-${userId}`).emit('products-updated');
+    }
+
+    return res.json({ result: true, added });
+  } catch (error) {
+    console.error('❌ Erreur addproducts-bulk:', error);
+    return res.status(500).json({ result: false, message: "Erreur lors de l'import groupé." });
+  }
+});
 
 // Route pour ajouter un nouveau produit dans la collection products ou myproducts.
 router.post('/addproduct', async (req, res) => {
@@ -137,6 +214,11 @@ router.post('/addproduct', async (req, res) => {
       });
 
       const data = await user.save();
+
+      const io = req.app.get('io'); //écupère l'instance socket
+      io.to(`user-${userId}`).emit('products-updated');//cible la room de cet utilisateur spécifiquement
+
+
       const approachingLimit = !isMigration && !isPremium && data.myproducts.length === 40;
       return res.json({
         result: true,
@@ -209,7 +291,6 @@ router.post('/addproduct', async (req, res) => {
 });
 
 
-
 // Route pour mettre à jour les données dans le sous-document myproducts
 router.put('/myproducts/:productId', async (req, res) => {
   const userId = req.user._id;
@@ -232,17 +313,19 @@ router.put('/myproducts/:productId', async (req, res) => {
       return res.status(404).json({ result: false, error: "Produit introuvable" });
     }
 
-    // 🗑️ Si nouvelle image fournie ET ancienne image R2 existe
-    if (image && currentProduct.image && currentProduct.image.includes('r2.dev')) {
-      console.log("🗑️ Suppression ancienne image backend:", currentProduct.image);
-
+    // Supprime l'ancienne image R2 si on en envoie une nouvelle et que l'ancienne est sur R2
+    if (
+      image &&
+      currentProduct.image &&
+      process.env.R2_PUBLIC_BASE &&
+      currentProduct.image.includes(process.env.R2_PUBLIC_BASE) &&
+      currentProduct.image !== image
+    ) {
       try {
-        const oldKey = currentProduct.image.split('/').slice(-2).join('/');
+        const oldKey = currentProduct.image.replace(`${process.env.R2_PUBLIC_BASE}/`, '');
         await deleteFromR2(oldKey);
-        console.log("✅ Ancienne image supprimée");
       } catch (delErr) {
-        console.error("⚠️ Échec suppression ancienne image:", delErr);
-        // On continue quand même la mise à jour
+        console.error('⚠️ Échec suppression ancienne image R2 produit:', delErr.message);
       }
     }
 
@@ -276,6 +359,9 @@ router.put('/myproducts/:productId', async (req, res) => {
 
     console.log("✅ Produit mis à jour avec succès");
     res.json({ result: true, user: updatedUser });
+   
+    const io = req.app.get('io'); //écupère l'instance socket
+    io.to(`user-${userId}`).emit('products-updated');//cible la room de cet utilisateur spécifiquement
 
   } catch (err) {
     console.error("❌ Erreur mise à jour produit:", err);
@@ -296,11 +382,14 @@ router.delete('/deleteProduct/:productId', upload.single('photoproduct'), async 
     if (!userId) {
       return res.status(401).json({ result: false, message: "Token manquant." });
     }
-    // Supprimer l'image de R2 si une clé est fournie
-    if (imageKey) {
-      const decodedKey = imageKey.replace(`${process.env.R2_PUBLIC_BASE}/`, '');
-      await deleteFromR2(decodedKey);
-      console.log('image supprimée de R2:', decodedKey);
+    // Supprime l'image R2 uniquement si c'est une URL R2 (pas une base64)
+    if (imageKey && process.env.R2_PUBLIC_BASE && imageKey.includes(process.env.R2_PUBLIC_BASE)) {
+      try {
+        const decodedKey = imageKey.replace(`${process.env.R2_PUBLIC_BASE}/`, '');
+        await deleteFromR2(decodedKey);
+      } catch (e) {
+        console.error('⚠️ Échec suppression image R2 produit:', e.message);
+      }
     }
 
     // Trouver l'utilisateur et supprimer le produit de `myproducts`
@@ -329,6 +418,10 @@ router.delete('/deleteProduct/:productId', upload.single('photoproduct'), async 
       // Sauvegarder les modifications
       await planning.save();
     }
+
+    const io = req.app.get('io'); //Récupère l'instance socket
+    io.to(`user-${userId}`).emit('products-updated');//cible la room de cet utilisateur spécifiquement
+
 
     res.json({ result: true, message: "Produit supprimé avec succès.", user: updatedUser });
 
@@ -384,8 +477,5 @@ router.get('/getproducts/code/:codebarre', (req, res) => {
       res.status(500).json({ result: false, error: err.message });
     });
 })
-
-
-
 
 module.exports = router;

@@ -4,7 +4,7 @@ const itemSchema =  mongoose.Schema({
   name: { type: String, required: true },
   shop: String,
   price: String,
-  quantity: { type: Number, default: 1 },
+  quantity: { type: Number },
   unit: { type: String, default: '' },
   checked: { type: Boolean, default: false },
 });

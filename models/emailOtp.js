@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const emailOtpSchema = new mongoose.Schema({
   userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'users', index: true, required: true },
   emailLower: { type: String, required: true, index: true },
-  purpose:    { type: String, enum: ['verify_email'], required: true },
+  purpose:    { type: String, enum: ['verify_email', 'reset_password'], required: true },
   codeHash:   { type: String, required: true },
   expiresAt:  { type: Date,   required: true },
   usedAt:     { type: Date,   default: null },

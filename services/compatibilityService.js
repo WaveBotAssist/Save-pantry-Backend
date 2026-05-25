@@ -20,7 +20,8 @@ const normaliser = str =>
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
-    .replace(/œ/g, 'oe')          // œ → oe
+    .replace(/œ/g, 'oe')
+    .replace(/\([a-z]{1,3}\)/g, ' ') // "(s)", "(es)", "(x)" — artefacts de format IA
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -34,12 +35,12 @@ const normaliser = str =>
 const RE_MESURES = new RegExp(
   [
     // FR
-    'sachets? de',   'pincees? de',  'boites? de',   'bottes? de',
-    'tranches? de',  'verres? de',   'gousses? de',  'filets? de',
-    'poignees? de',  'tasses? de',   'doses? de',    'morceaux? de',
-    'portions? de',  'brins? de',    'feuilles? de', 'zestes? de',
-    'branches? de',  'lamelles? de', 'rondelles? de','cubes? de',
-    'bouquets? de',
+    'sachets? de',    'pincees? de',   'boites? de',    'bottes? de',
+    'tranches? de',   'verres? de',    'gousses? de',   'filets? de',
+    'poignees? de',   'tasses? de',    'doses? de',     'morceaux? de',
+    'portions? de',   'brins? de',     'feuilles? de',  'zestes? de',
+    'branches? de',   'lamelles? de',  'rondelles? de', 'cubes? de',
+    'bouquets? de',   'noisettes? de', 'traits? de',    'nuages? de',
     // EN
     'cups? of',       'packets? of',   'pinch(?:es)? of', 'slices? of',
     'pieces? of',     'handfuls? of',  'bunches? of',     'cloves? of',
@@ -67,6 +68,12 @@ const MOTS_MESURE_SEULS = new Set([
   'pincee',   'pincees',
   'verre',    'verres',
   'tasse',    'tasses',
+  'tranche',  'tranches',   // "8 tranches gouda" → "tranche" est une unité de portion
+  'portion',  'portions',
+  'part',     'parts',
+  'morceau',  'morceaux',
+  'rondelle', 'rondelles',
+  'lamelle',  'lamelles',
   // EN
   'tablespoon', 'tablespoons',
   'teaspoon',   'teaspoons',
@@ -75,6 +82,8 @@ const MOTS_MESURE_SEULS = new Set([
   'bag',        'bags',
   'packet',     'packets',
   'cup',        'cups',
+  'slice',      'slices',
+  'piece',      'pieces',
 ]);
 
 /**
@@ -112,9 +121,25 @@ const QUALIFICATIFS_SIMPLES = new Set([
   'frais', 'fraiche', 'entier', 'entiere', 'complet', 'complete',
   'leger', 'legere', 'nature', 'naturel', 'naturelle',
   'sec', 'seche', 'sale', 'sucre', 'sucree',
+  // Préparation culinaire (ne change pas la nature de l'aliment)
+  'dur', 'dure', 'durs', 'dures',
+  'fondu', 'fondue', 'fondus', 'fondues',
+  'battu', 'battue', 'battus', 'battues',
+  'rape', 'rapee', 'rapes', 'rapees',
+  'hache', 'hachee', 'haches', 'hachees',
+  'emince', 'emincee', 'eminces', 'emincees',
+  'coupe', 'coupee', 'coupes', 'coupees',
+  'ecrase', 'ecrasee', 'ecrases', 'ecrasees',
+  'mixe', 'mixee', 'mixes', 'mixees',
+  'cuit', 'cuite', 'cuits', 'cuites',
+  'grille', 'grillee', 'grilles', 'grillees',
+  'epluchee', 'epluche', 'epluches', 'epluchees',
+  'tamise', 'tamisee',
   // EN
   'dark', 'white', 'light', 'mild', 'strong', 'fresh', 'dried', 'whole',
   'sweet', 'bitter', 'plain', 'pure',
+  'melted', 'beaten', 'grated', 'chopped', 'minced', 'sliced',
+  'crushed', 'mashed', 'cooked', 'grilled', 'peeled', 'sifted',
 ]);
 
 // ─── Logique principale ───────────────────────────────────────────────────────
@@ -176,6 +201,45 @@ function supprimerMesures(txt) {
   txt = txt.replace(/\bun\s+peu\s+de\b/g,    ' ');
   txt = txt.replace(/\ba\s+little\s+of\b/g,  ' ');
 
+  // Articles et quantificateurs isolés — retirés AVANT les gardes pour ne pas les bloquer
+  // Ex FR : "un oignon" → "oignon", "du beurre" → "beurre", "quelques tomates" → "tomates"
+  // Ex EN : "an onion" → "onion", "a clove" → "clove", "some cream" → "cream"
+  txt = txt.replace(/\bquelques\b/g, ' ');
+  txt = txt.replace(/\benviron\b/g,  ' ');
+  txt = txt.replace(/\bun\b/g,       ' ');
+  txt = txt.replace(/\bune\b/g,      ' ');
+  txt = txt.replace(/\bdu\b/g,       ' ');
+  txt = txt.replace(/\bsome\b/g,     ' ');
+  txt = txt.replace(/\ban\b/g,       ' ');
+  txt = txt.replace(/\ba\b/g,        ' ');
+
+  // Contenants et unités de comptage sans connecteur
+  // Couvre les formats IA "2 gousses Ail", "1 tranche Jambon", "1 pièce Oignon", etc.
+  txt = txt.replace(/\bpieces?\b/g,   ' ');
+  txt = txt.replace(/\bunites?\b/g,   ' ');
+  txt = txt.replace(/\bgousses?\b/g,  ' ');
+  txt = txt.replace(/\btranches?\b/g, ' ');
+  txt = txt.replace(/\bbrins?\b/g,    ' ');
+  txt = txt.replace(/\bfeuilles?\b/g, ' ');
+  txt = txt.replace(/\bbranches?\b/g, ' ');
+  txt = txt.replace(/\bzestes?\b/g,   ' ');
+  txt = txt.replace(/\bbottes?\b/g,   ' ');
+  txt = txt.replace(/\btiges?\b/g,    ' ');
+  // EN — mêmes unités sans "of"
+  txt = txt.replace(/\bcloves?\b/g,   ' ');
+  txt = txt.replace(/\bsprigs?\b/g,   ' ');
+  txt = txt.replace(/\bleaves?\b/g,   ' ');
+  txt = txt.replace(/\bbunches?\b/g,  ' ');
+
+  // Métadonnées sur l'ingrédient — pas son nom (ex: "miel (facultatif)" → "miel")
+  txt = txt.replace(/\(facultatif\)/g,  ' ');
+  txt = txt.replace(/\(optionnel\)/g,   ' ');
+  txt = txt.replace(/\(optional\)/g,    ' ');
+  txt = txt.replace(/\bfacultatif\b/g,  ' ');
+  txt = txt.replace(/\boptionnel\b/g,   ' ');
+  txt = txt.replace(/\boptional\b/g,    ' ');
+
+
   return txt.replace(/\s+/g, ' ').trim();
 }
 
@@ -195,11 +259,11 @@ function estIngredientFantome(normStripped) {
  *   1. Connecteur composé gauche — rejet si précédé de "au / aux / à la / à l'"
  *      (évite que "beurre" couvre l'ingrédient "croissant au beurre")
  *
- *   2. Pluriel — le dernier mot du produit peut être au pluriel (+s)
- *      (accepte "pomme" → "pommes")
+ *   2. Pluriel ±s / ±x — "pomme" ↔ "pommes", "poireau" ↔ "poireaux"
+ *      (correspondance conservative : pas de préfixe arbitraire)
  *
- *   3. Limite droite — rien d'autre ne suit sauf un chiffre
- *      (évite "sauce" dans "sauce barbecue", "pomme" dans "pommes de terre")
+ *   3. Limite droite — rien après le segment sauf un chiffre ou un qualificatif simple
+ *      (évite "sauce" dans "sauce barbecue", mais accepte "chocolat" dans "chocolat noir")
  *
  * @param {string} normIngredient  Ingrédient après normaliser() + supprimerMesures()
  * @param {string} normProduit     Produit après normaliser()
@@ -209,6 +273,18 @@ function produitPresent(normIngredient, normProduit) {
 
   const iWords = normIngredient.split(' ');
   const pWords = normProduit.split(' ');
+
+  // Vérification préfixe : si l'ingrédient est plus court que le produit,
+  // l'ingrédient peut correspondre au début du nom produit.
+  // "mayonnaise" → "MAYONNAISE OEUF" ✅, "oeuf" → "MAYONNAISE OEUF" ❌
+  if (pWords.length > iWords.length) {
+    const prefixMatch = iWords.every((iw, idx) => {
+      const pw = pWords[idx];
+      if (!pw) return false;
+      return iw === pw || iw === pw + 's' || pw === iw + 's' || iw === pw + 'x' || pw === iw + 'x';
+    });
+    if (prefixMatch) return true;
+  }
 
   for (let i = 0; i <= iWords.length - pWords.length; i++) {
 
@@ -220,26 +296,39 @@ function produitPresent(normIngredient, normProduit) {
     if (motAvant === 'la' && deuxAvant === 'a') continue;
     if (motAvant === 'l'  && deuxAvant === 'a') continue;
 
-    // Garde-fou 1b : composé "X de Y" où X est un aliment
-    // Évite que "légumes" couvre "bouillon de légumes"
+    // Garde-fou 1b : composé "X de/of Y" où X est un aliment
+    // Évite que "légumes" couvre "bouillon de légumes", "mushroom" couvre "cream of mushroom"
     // Exception : X est un chiffre ("100g de farine") ou une unité ("500 ml de bouillon")
-    if ((motAvant === 'de' || motAvant === 'des' || motAvant === 'd') && i > 1) {
+    if (motAvant === 'de' || motAvant === 'des' || motAvant === 'd' || motAvant === 'of') {
       const motAvantDe = iWords[i - 2] ?? '';
-      const estQuantite = /^\d/.test(motAvantDe) || MOTS_QUANTITE.has(motAvantDe);
-      if (!estQuantite) continue;
+      // motAvantDe vide = ingrédient commence par "de/des/of" → autorisé
+      if (motAvantDe && !/^\d/.test(motAvantDe) && !MOTS_QUANTITE.has(motAvantDe)) continue;
     }
 
-    // Garde-fou 2 : correspondance mot-à-mot (singulier ou pluriel)
+    // Garde-fou 1c : position gauche — si le produit ne commence pas l'ingrédient,
+    // le mot précédent doit être un chiffre, une unité de mesure ou un connecteur.
+    // Ex : "sauce soja" + produit "soja" → motAvant="sauce" → rejet
+    //      "3 oeufs"    + produit "oeuf" → motAvant="3"     → autorisé
+    if (i > 0 &&
+        motAvant !== 'de' && motAvant !== 'des' && motAvant !== 'd' &&
+        motAvant !== 'of' && motAvant !== 'et'  && motAvant !== 'and' &&
+        !/^\d/.test(motAvant) && !MOTS_QUANTITE.has(motAvant)) continue;
+
+    // Garde-fou 2 : correspondance mot-à-mot (singulier ou pluriel ±s / ±x)
     const segment = iWords.slice(i, i + pWords.length);
     const correspond = pWords.every((mot, idx) => {
       const cible = segment[idx];
-      return cible === mot || cible === `${mot}s`;
+      return (
+        cible === mot          ||
+        cible === mot + 's'    || mot === cible + 's'   ||
+        cible === mot + 'x'    || mot === cible + 'x'
+      );
     });
     if (!correspond) continue;
 
-    // Garde-fou 3 : limite droite
-    // Autorise les qualificatifs simples (couleurs, intensités) qui ne changent pas
-    // la nature de l'aliment : "chocolat noir" est du chocolat, "sauce barbecue" ne l'est pas.
+    // Garde-fou 3 : limite droite — rien après le segment sauf un chiffre ou un qualificatif simple
+    // Ex : "sauce barbecue" → "barbecue" absent de QUALIFICATIFS_SIMPLES → rejet
+    //      "beurre fondu"   → "fondu" présent dans QUALIFICATIFS_SIMPLES → accepté
     const motApres = iWords[i + pWords.length] ?? null;
     if (motApres && !/^\d/.test(motApres) && !QUALIFICATIFS_SIMPLES.has(motApres)) continue;
 
@@ -281,8 +370,12 @@ function calculerCompatibilite(recette, myproducts = []) {
       return { ingredient, disponible: true, produitCorrespondant: null };
     }
 
+    // Alternatives "X ou Y" — vérifie chaque option séparément
+    // "miel ou sucre" → ["miel", "sucre"] — disponible si l'une ou l'autre est en stock
+    const alternatives = normIngredient.split(/\bou\b|\bor\b/).map(s => s.trim()).filter(Boolean);
+
     const produitCorrespondant = produitsNormalises.find(produit =>
-      produitPresent(normIngredient, produit)
+      alternatives.some(alt => produitPresent(alt, produit))
     ) ?? null;
 
     return {

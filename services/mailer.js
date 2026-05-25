@@ -31,48 +31,31 @@ async function sendEmailOtp({ toEmail, toName = '', code }) {
 }
 
 
-//fonction pour modifier son mot de passe perdu et créé le message de l email
-function buildResetEmail({ toName, resetUrl }) {
+/** Email de réinitialisation mot de passe par code OTP */
+async function sendPasswordResetOtp({ toEmail, toName = '', code }) {
   const html = `
     <p>Hello${toName ? ' ' + toName : ''},</p>
-    <p>You requested to reset your password.</p>
-    <p><a href="${resetUrl}">Click here to reset it</a> (valid for 30 minutes).</p>
+    <p>You requested to reset your SavePantry password.</p>
+    <p>Your reset code:</p>
+    <p style="font-size:28px; font-weight:bold; letter-spacing:6px;">${code}</p>
+    <p>Valid for 15 minutes. Do not share it.</p>
     <p>If you did not make this request, please ignore this message.</p>
     <p>— The SavePantry Team</p>
   `;
-  const text = [
-    `Hello${toName ? ' ' + toName : ''},`,
-    `You requested to reset your password.`,
-    `Link: ${resetUrl}`,
-    `The link expires in 30 minutes.`,
-    `If you did not make this request, please ignore this message.`,
-    `— The SavePantry Team`,
-  ].join('\n');
-  return { html, text };
-}
-
-async function sendPasswordResetEmail({ toEmail, toName = '', resetUrl }) {
-  const { html, text } = buildResetEmail({ toName, resetUrl });
+  const text = `Password reset code: ${code}\nValid for 15 minutes.\n— SavePantry`;
 
   const payload = {
     Messages: [{
-      From: { Email: process.env.MAIL_FROM_EMAIL, Name: process.env.MAIL_FROM_NAME },
+      From: { Email: process.env.MAIL_FROM_EMAIL, Name: process.env.MAIL_FROM_NAME || 'SavePantry' },
       To: [{ Email: toEmail, Name: toName }],
-      Subject: 'Password Reset',
+      Subject: 'Your password reset code',
       TextPart: text,
       HTMLPart: html,
-      // Headers optionnels :
-      // Headers: { 'Reply-To': 'support@tondomaine.com' },
     }],
   };
-
-  // Appel HTTPS à l’API Mailjet (v3.1)
   const res = await mj.post('send', { version: 'v3.1' }).request(payload);
   const msg = res.body?.Messages?.[0];
-  if (!msg || msg.Status !== 'success') {
-    throw new Error('Mailjet API: send failed');
-  }
-  return msg;
+  if (!msg || msg.Status !== 'success') throw new Error('Mailjet send failed');
 }
 
-module.exports = { sendPasswordResetEmail, sendEmailOtp };
+module.exports = { sendEmailOtp, sendPasswordResetOtp };

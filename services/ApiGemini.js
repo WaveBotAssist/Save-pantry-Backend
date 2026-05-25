@@ -109,7 +109,7 @@ ${ocrText}`;
     return await callGemini({
       model:  GEMINI_MODELS.flashLite,
       prompt,
-      config: { temperature: 0.1, maxOutputTokens: 2000 },
+      config: { temperature: 0, maxOutputTokens: 2000 }, // 0 = déterministe pour extraction de données
     });
   } catch (err) {
     throw new Error(`Gemini API error: ${err.message}`);

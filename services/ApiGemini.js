@@ -94,9 +94,9 @@ FILTER OUT
 - Any line representing a receipt stamp, validation seal, or non-food brand (e.g. cookware, appliances) → exclude. "CACHET [Brand]" (e.g. "CACHET TEFAL", "CACHET SEB") = validation stamp printed on receipt, NOT a product → exclude.
 
 OUTPUT
-category (exactly one, no other value allowed): Produits laitiers | Féculents | Fruits et légumes | Matières grasses | Produits sucrés | Boissons | Viande, Poisson, oeuf | Sauces | Hygiène | Entretien
-Pick the closest category — every product must be assigned one of these 10 values:
-Produits laitiers=dairy, eggs, frozen/chilled foods; Féculents=bread/pasta/rice/cereals/pastries/legumes/potatoes/fries/chips/snacks; Fruits et légumes=fresh fruits and vegetables (not frozen, not chips); Matières grasses=oils/butter/margarine; Produits sucrés=chocolate/jam/honey/candy/sugar; Boissons=any drink; Viande, Poisson, oeuf=meat/fish/seafood/deli including all processed meat products (boulettes, saucisses, nuggets); Sauces=condiments/sauces/vinegar/mustard; Hygiène=personal care/soap/cosmetics; Entretien=household cleaning/detergent.
+category (exactly one, no other value allowed): Produits laitiers | Féculents | Fruits et légumes | Matières grasses | Produits sucrés | Boissons | Viande, Poisson, oeuf | Sauces | Épices & condiments | Hygiène | Entretien
+Pick the closest category — every product must be assigned one of these 11 values:
+Produits laitiers=dairy, eggs, frozen/chilled foods; Féculents=bread/pasta/rice/cereals/pastries/legumes/potatoes/fries/chips/snacks; Fruits et légumes=fresh fruits and vegetables (not frozen, not chips); Matières grasses=oils/butter/margarine; Produits sucrés=chocolate/jam/honey/candy/sugar; Boissons=any drink; Viande, Poisson, oeuf=meat/fish/seafood/deli including all processed meat products (boulettes, saucisses, nuggets); Sauces=condiments/sauces/vinegar/mustard/ketchup/pesto; Épices & condiments=salt/pepper/spices/herbs/dried seasonings; Hygiène=personal care/soap/cosmetics; Entretien=household cleaning/detergent.
 store: look in the FIRST lines of the receipt (header, before any product line). Extract the real business or brand name using your own knowledge to correct OCR noise (e.g. "REyhaN"→"Reyhan", "LIDI"→"Lidl", "lntermarche"→"Intermarche"). Never use generic words like "Supermarché", "Supermarket", "Magasin" or "Shop" as the store name — those describe the type of store, not its name. If the name is truly unrecognizable → "".
 date: YYYY-MM-DD. total: copy from TOTAL/A payer only, never calculate. currency: symbol from receipt, default "€".
 

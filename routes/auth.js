@@ -232,7 +232,7 @@ router.put('/change-password', checkToken, async (req, res) => {
     if (!user) return res.status(404).json({ result: false, message: 'Utilisateur introuvable.' });
 
     const isValid = await bcrypt.compare(currentPassword, user.password);
-    if (!isValid) return res.status(401).json({ result: false, message: 'Mot de passe actuel incorrect.' });
+    if (!isValid) return res.status(400).json({ result: false, message: 'Mot de passe actuel incorrect.' });
 
     user.password = await bcrypt.hash(newPassword, 10);
     await user.save();

@@ -327,6 +327,7 @@ router.post('/generate', aiCredits, async (req, res) => {
       weekStart
     );
 
+    await req.consumeCredit?.();
     res.json({ result: true, plan });
   } catch (err) {
     console.error('❌ [POST /planning/generate]', err.message);

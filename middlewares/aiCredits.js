@@ -66,8 +66,8 @@ module.exports = async function aiCreditsMiddleware(req, res, next) {
         });
       }
 
-      // Consomme 1 crédit et continue vers la route IA
-      await ScannerQuota.updateOne({ _id: quota._id }, { $inc: { scanCount: 1 } });
+      // La route appellera req.consumeCredit() uniquement si elle réussit
+      req.consumeCredit = () => ScannerQuota.updateOne({ _id: quota._id }, { $inc: { scanCount: 1 } });
       return next();
     }
 
@@ -108,8 +108,8 @@ module.exports = async function aiCreditsMiddleware(req, res, next) {
       });
     }
 
-    // Consomme 1 crédit et continue vers la route IA
-    await ScannerQuota.updateOne({ _id: quota._id }, { $inc: { scanCount: 1 } });
+    // La route appellera req.consumeCredit() uniquement si elle réussit
+    req.consumeCredit = () => ScannerQuota.updateOne({ _id: quota._id }, { $inc: { scanCount: 1 } });
     next();
 
   } catch (err) {

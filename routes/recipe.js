@@ -545,6 +545,7 @@ router.post('/generate', aiCredits, async (req, res) => {
         });
       }
 
+      await req.consumeCredit?.();
       res.json({ result: true, recipe });
     } catch (err) {
       console.error('❌ [POST/recipe/generate]', err.message);
@@ -579,6 +580,7 @@ router.post('/scan', aiCredits, async (req, res) => {
       });
     }
 
+    await req.consumeCredit?.();
     res.json({ result: true, recipe });
   } catch (err) {
     console.error('❌ [POST /recipe/scan]', err.message);
@@ -618,6 +620,7 @@ router.post('/import-url', aiCredits, async (req, res) => {
       });
     }
 
+    await req.consumeCredit?.();
     res.json({ result: true, recipe });
   } catch (err) {
     console.error('❌ [POST /recipe/import-url]', err.message);

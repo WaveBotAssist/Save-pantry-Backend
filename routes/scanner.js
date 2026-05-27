@@ -11,7 +11,7 @@
  * Flux :
  *   1. Validation deviceId + texte OCR
  *   2. Vérification qualité OCR (pas de pénalité quota si photo floue)
- *   3. [aiCredits middleware] vérifie et consomme 1 crédit
+ *   3. [aiCredits middleware] vérifie les crédits disponibles
  *   4. Appel Gemini pour extraction produits
  *   5. Déduplication + enrichissement dates d'expiration
  *   6. Retour des produits au frontend
@@ -89,6 +89,7 @@ router.post('/scan-receipt', scanRateLimit, validateScanRequest, aiCredits, asyn
     console.log('reponse de api gemini', geminiResult);
 
     if (!Array.isArray(geminiResult?.items)) {
+      await req.consumeCredit?.();
       return res.status(200).json({
         result:   true,
         store:    geminiResult?.store || '',
@@ -128,6 +129,7 @@ router.post('/scan-receipt', scanRateLimit, validateScanRequest, aiCredits, asyn
 
     // ── Étape 6 : Réponse ────────────────────────────────────────────────────
 
+    await req.consumeCredit?.();
     return res.status(200).json({
       result:   true,
       store:    geminiResult.store    || '',

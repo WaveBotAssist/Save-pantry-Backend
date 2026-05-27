@@ -26,6 +26,7 @@ const EXPIRY_DAYS_BY_CATEGORY = {
   'Boissons':               180,  // Jus, sodas, eau (boissons réfrigérées → mot-clé)
   'Viande, Poisson, oeuf':  3,    // Viandes et poissons frais, œufs
   'Sauces':                 90,   // Ketchup, moutarde, mayonnaise
+  'Épices & condiments':    730,  // Épices et herbes sèches
 };
 
 /**

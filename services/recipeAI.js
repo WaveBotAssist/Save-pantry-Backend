@@ -48,21 +48,57 @@ async function extractRecipeFromUrl(url) {
   const cheerio = require("cheerio");//Cheerio Librairie JavaScript qui permet de lire et manipuler du HTML très facilement
   const fetch = require('node-fetch');
 
+  const BASE_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'gzip, deflate',
+  };
 
-  const controller = new AbortController();//API JavaScript qui permet d’annuler une requête asynchrone
+  // Suit les redirections manuellement pour accumuler les cookies (sites avec middleware de tracking)
+  async function fetchFollowingRedirects(startUrl, signal) {
+    const cookies = {};
+    let currentUrl = startUrl;
+
+    for (let i = 0; i < 10; i++) {
+      const cookieHeader = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ');
+      const res = await fetch(currentUrl, {
+        redirect: 'manual',
+        signal,
+        headers: { ...BASE_HEADERS, ...(cookieHeader ? { 'Cookie': cookieHeader } : {}) },
+      });
+
+      // Accumule les cookies Set-Cookie de chaque réponse
+      const setCookie = res.headers.get('set-cookie');
+      if (setCookie) {
+        for (const part of setCookie.split(',')) {
+          const [nameVal] = part.split(';');
+          const eqIdx = nameVal.indexOf('=');
+          if (eqIdx > 0) {
+            const k = nameVal.slice(0, eqIdx).trim();
+            const v = nameVal.slice(eqIdx + 1).trim();
+            if (k) cookies[k] = v;
+          }
+        }
+      }
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get('location');
+        if (!location) break;
+        currentUrl = location.startsWith('http') ? location : new URL(location, currentUrl).href;
+      } else {
+        return res;
+      }
+    }
+    throw new Error("Maximum de redirections atteint.");
+  }
+
+  const controller = new AbortController();//API JavaScript qui permet d'annuler une requête asynchrone
   const timeout = setTimeout(() => controller.abort(), 10_000);// Après 10 secondes le fetch est stoppé
 
   let html;
   try {
-    const res = await fetch(url, {
-      signal: controller.signal, //écoute ce signal
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
-        'Accept-Encoding': 'gzip, deflate',
-      },
-    });
+    const res = await fetchFollowingRedirects(url, controller.signal);
     if (!res.ok) throw new Error(`HTTP ${res.status} — impossible d'accéder à la page.`);
     html = await res.text();
 
@@ -73,24 +109,20 @@ async function extractRecipeFromUrl(url) {
   const $ = cheerio.load(html);//$ devient une fonction pour naviguer dans le HTML Exactement comme document.querySelector
 
   const image =
-  $('meta[property="og:image"]').attr("content") //.text() lire le text .attr() lire l attribut
-  ||
+    $('meta[property="og:image"]').attr("content") ||
     $('meta[property="og:image:url"]').attr('content') ||
     // Twitter card
     $('meta[name="twitter:image"]').attr('content') ||
     $('meta[name="twitter:image:src"]').attr('content') ||
-   // Certains sites utilisent name au lieu de property
+    // Certains sites utilisent name au lieu de property
     $('meta[name="og:image"]').attr('content') ||
-   // Schema.org
-    $('meta[itemprop="image"]').attr('content')
-  ||
-   // Lien image_src (ancien format)
+    // Schema.org
+    $('meta[itemprop="image"]').attr('content') ||
+    // Lien image_src (ancien format)
     $('link[rel="image_src"]').attr('href') ||
-   // Première grande image dans le contenu
-  (fallback)
-    $('article img, .recipe img, mainimg').first().attr('src') ||
-   null;
-
+    // Première grande image dans le contenu
+    $('article img, .recipe img').first().attr('src') ||
+    null;
 
   $("script").remove(); //supprime les script
   $("style").remove(); // supprime les styles

@@ -43,27 +43,38 @@ async function ApiGemini(ocrText) {
   // ─────────────────────────────────────────────────────────────────────────
   const prompt = `Supermarket receipt parser. Any language. JSON only.
 
-INPUT
-Lines: "[PRODUCT] | PRIX: price", "[PRODUCT]", or orphan price (assign to previous product ONLY IF that product has no price yet — if it already has one, assign to the NEXT named product instead).
+INPUT FORMAT
+Each line is one of:
+  A) "LEFT  |  RIGHT" — preprocessed: left=product side, right=price side (double-space pipe double-space separator)
+  B) plain text line — product name, or orphan price, or qty line
+
+For format A:
+- RIGHT side = price (extract the rightmost decimal number as price, the rest as qty/suffix info)
+- LEFT side = product info: may contain qty prefix ("2 JAMBON CUIT" → qty=2, name=JAMBON CUIT) or just name
+- If RIGHT contains two numbers (e.g. "2  3.29"): first = qty, second = unit price
+- If LEFT is a number only (e.g. "3  |  4.98") and previous product has no qty: qty=3, price=4.98 for that product
+- Swapped: if LEFT is clearly a price and RIGHT is clearly a name → swap them
+
+For format B (plain line):
+- Orphan price: assign to previous product if it has no price yet; else to next product
+- Orphan price + next line is numeric-code+name (e.g. "077aubergine"): price belongs to NEXT product, strip prefix
+
 Skip: address, phone, SIRET, website, ticket numbers, loyalty messages, gibberish (2+ consecutive non-words).
-Orphan price + next line is numeric-code+name (e.g. "077aubergine"): price belongs to NEXT product, strip numeric prefix.
 
 PRICES (always unit price)
 - No price → 0. "." and "," both decimal separators, never convert to cents: "48.20"→48.20, "110,00"→110.00.
 - Space between digits = thousands separator: "1 000"→1000. OCR space after decimal: "6, 58"→6.58.
 - Ignore VAT suffix: "2,99 B"→2.99, "3,07 EUR A"→3.07.
 - Negative = discount. If product has its own price → ignore discount line entirely. If no product price: original=|discount|/(X/100) from "REMISE X%" above; unknown %→0.
-- Swapped columns (price left, name right): swap. "3,07 EUR A | PRIX: VOLVIC"→name=VOLVIC, price=3.07.
 - Same product, one price deviates strongly → use consistent price. No similar line → 0.
-- NEVER divide price unless qty is explicit in text. "GEL JAVEL 110,00" (no qty)→price=110.00, qty=1.
+- NEVER divide price unless qty is explicit in text. "GEL JAVEL  |  110,00" (no qty)→price=110.00, qty=1.
 
 QUANTITY
-- Integer before name (not "0+digits" article code) → qty, remove from name. "2 PRODUIT 4.00"→qty=2.
-- "unit X qty total": verify unit×qty≈total (±0.02); if not → price=total/qty. "9,35 X 2 0,70"→price=0.35.
-- "PRIX: qty unit total€": "PRIX: 2 65.07 130.14€"→qty=2, price=65.07.
-- "PRIX: unit total€": qty=round(total/unit). "PRIX: 60.25 180.75€"→qty=3, price=60.25.
-- "x N" in name or after price → qty=N, remove from name. "CAFE LATTE 0,99 x4"→qty=4, price=0.99.
-- Next line "N x price": overrides product qty/price. "Mini-Steaks 6,58" + "2 x 3,29"→qty=2, price=3.29.
+- Integer before name (not "0+digits" article code) → qty, remove from name. "2 PRODUIT  |  4.00"→qty=2, price=4.00.
+- "unit X qty total": verify unit×qty≈total (±0.02); if not → price=total/qty. "9,35  2  0,70"→price=0.35.
+- "qty  unit  total" on RIGHT side: "2  65.07  130.14"→qty=2, price=65.07. "3  60.25  180.75"→qty=3, price=60.25.
+- "xN" or "x N" in name or after price → qty=N, remove from name. "CAFE LATTE  |  0,99 x4"→qty=4, price=0.99.
+- Separate line "N  price" (no product text): overrides product qty/price. "Mini-Steaks  |  6,58" then "2  3,29"→qty=2, price=3.29.
 - "W kg x P EUR/kg" (or "W kg X P EURO/kg") after product = weight line. qty=1 ALWAYS — NEVER use the weight in kg as quantity.
   - Product has price on its own line → keep that price, ignore kg line entirely.
   - No product price → look for a TOTAL amount at the END of the kg line (after the EUR/kg rate):

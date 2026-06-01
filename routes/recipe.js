@@ -7,7 +7,6 @@ const Recipes = require('../models/recipe');
 const UserRecipe = require('../models/userRecipe');
 const { uploadToR2, deleteFromR2 } = require('../services/R2cloudflare');
 const { calculerCompatibilite } = require('../services/compatibilityService');
-
 const multer = require('multer');
 const { checkPremiumStatus } = require('../middlewares/checkPremium');
 const aiCredits = require('../middlewares/aiCredits');
@@ -546,7 +545,7 @@ router.post('/generate', aiCredits, async (req, res) => {
       }
 
       await req.consumeCredit?.();
-      res.json({ result: true, recipe });
+      res.json({ result: true, recipe, creditConsumed: true });
     } catch (err) {
       console.error('❌ [POST/recipe/generate]', err.message);
       if (!res.headersSent) {
@@ -581,7 +580,7 @@ router.post('/scan', aiCredits, async (req, res) => {
     }
 
     await req.consumeCredit?.();
-    res.json({ result: true, recipe });
+    res.json({ result: true, recipe, creditConsumed: true });
   } catch (err) {
     console.error('❌ [POST /recipe/scan]', err.message);
     res.status(500).json({ result: false, error: "Erreur lors de l'extraction de la recette." });
@@ -593,35 +592,37 @@ router.post('/scan', aiCredits, async (req, res) => {
    body: { url: string }
    Accessible à tous (optionalAuth).
 ───────────────────────────────────────────────────────────────────────────── */
-const { extractRecipeFromUrl } = require('../services/recipeAI');
+const { extractRecipeFromUrl, extractRecipeFromHtml } = require('../services/recipeUrlImport');
 
-router.post('/import-url', aiCredits, async (req, res) => {
+router.post('/import-url', async (req, res) => {
   try {
-    const { url } = req.body;
+    const { url, html } = req.body;
 
     if (!url || typeof url !== 'string') {
       return res.status(400).json({ result: false, error: 'URL manquante.' });
     }
 
-    // Validation basique de l'URL
     try {
       new URL(url);
     } catch {
       return res.status(400).json({ result: false, error: 'URL invalide.' });
     }
 
-    const recipe = await extractRecipeFromUrl(url);
-  
-    // Gemini n'a pas trouvé de recette dans la page
-    if (!recipe.titre && recipe.confidence === 0) {
+    // html fourni par le frontend (fetch depuis l'appareil) → pas de fetch serveur
+    // url seul → le backend fetch lui-même (fallback)
+    const recipe = html
+      ? extractRecipeFromHtml(html)
+      : await extractRecipeFromUrl(url);
+
+    if (!recipe) {
       return res.status(422).json({
         result: false,
-        error: "Aucune recette détectée sur cette page. Vérifie que l'URL pointe vers une recette.",
+        error: "Aucune recette structurée détectée sur cette page. Le site doit utiliser le format Schema.org/Recipe.",
       });
     }
 
-    await req.consumeCredit?.();
-    res.json({ result: true, recipe });
+    // Extraction JSON-LD uniquement — aucun crédit consommé
+    res.json({ result: true, recipe, creditConsumed: false });
   } catch (err) {
     console.error('❌ [POST /recipe/import-url]', err.message);
 
@@ -660,6 +661,57 @@ router.get('/:id', async (req, res) => {
     const recipe = await Recipes.findById(req.params.id);
     if (!recipe) return res.status(404).json({ result: false, error: 'Recette introuvable.' });
     res.json(recipe);
+  } catch (err) {
+    res.status(500).json({ result: false, error: err.message });
+  }
+});
+
+
+// ─── Partage de recette ───────────────────────────────────────────────────────
+
+// POST /recipe/share
+// Reçoit { sourceUrl } — crée un lien court et le retourne.
+// Pas de checkToken : optionalAuth sur la route parente suffit (anonymes inclus).
+const rateLimit = require('express-rate-limit');
+const shareLimiter = rateLimit({
+  windowMs: 60 * 1000, // fenetre de 1 minute
+  max: 10,             // max 10 liens par minute par IP
+  message: { result: false, message: 'Trop de demandes, réessayez dans une minute.' },
+});
+router.post('/share', shareLimiter, async (req, res) => {
+  try {
+    const { sourceUrl } = req.body;
+
+    // Étape 1 — vérifier que sourceUrl est fourni
+    if (!sourceUrl) {
+      return res.status(400).json({ result: false, message: 'sourceUrl requis.' });
+    }
+
+    // Étape 2 — vérifier que c'est bien une URL https valide
+    // On refuse tout ce qui n'est pas https:// pour bloquer les URLs javascript:,
+    // data:, ou les adresses de réseau interne (http://192.168.x.x...)
+    try {
+      const parsed = new URL(sourceUrl);
+      if (parsed.protocol !== 'https:') throw new Error();
+    } catch {
+      return res.status(400).json({ result: false, message: 'URL invalide.' });
+    }
+
+    // Étape 3 — réutiliser le lien existant si cette URL a déjà été partagée
+    const uid2 = require('uid2');
+    const SharedRecipe = require('../models/sharedRecipe');
+    let entry = await SharedRecipe.findOne({ sourceUrl });
+    if (!entry) {
+      entry = await SharedRecipe.create({ code: uid2(8), sourceUrl });
+    }
+
+    // Étape 4 — retourner l'URL de partage complète
+    // NODE_ENV = "production" est défini automatiquement par l'hébergeur (Railway, Render...)
+    const base = process.env.NODE_ENV === 'production'
+      ? 'https://savepantry.org'
+      : 'http://192.168.1.56:3000';
+    res.json({ result: true, shareUrl: `${base}/s/${entry.code}` });
+
   } catch (err) {
     res.status(500).json({ result: false, error: err.message });
   }

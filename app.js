@@ -35,6 +35,7 @@ var favoritesRouter = require('./routes/favoritesRecipes');
 var auth = require('./routes/auth');
 var planningRouter = require('./routes/planning');
 const scannerRouter = require('./routes/scanner')
+const shareRouter   = require('./routes/share')
 
 // INITIALISATION DE EXPRESS
 var app = express();
@@ -89,6 +90,7 @@ app.use(middleware.handle(i18next));
 // Public
 app.use('/', indexRouter);
 app.use('/auth', auth);
+app.use('/s',    shareRouter); // liens de partage de recettes — aucun token requis
 
 // Mixte
 app.use('/users', usersRouter);

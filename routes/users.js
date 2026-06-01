@@ -31,7 +31,7 @@ async function checkPremiumStatusWithRetry(revenuecatId, maxRetries = 5, delayMs
 
       if (!response.ok) {
         console.error(`❌ Erreur API RevenueCat (${response.status})`);
-        
+
         if (attempt < maxRetries) {
           console.log(`⏳ Attente de ${delayMs}ms avant nouvelle tentative...`);
           await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -42,27 +42,18 @@ async function checkPremiumStatusWithRetry(revenuecatId, maxRetries = 5, delayMs
 
       const data = await response.json();
 
-      // 🔍 Log détaillé pour debug
-      console.log('📦 Données RevenueCat:', JSON.stringify({
-        subscriber: data.subscriber?.subscriber_id,
-        hasEntitlements: !!data.subscriber?.entitlements,
-        hasPremium: !!data.subscriber?.entitlements?.premium,
-        premiumExpiry: data.subscriber?.entitlements?.premium?.expires_date,
-        allEntitlements: Object.keys(data.subscriber?.entitlements || {})
-      }, null, 2));
-
       // ✅ Vérifier si premium est actif
       const isPremium =
         !!data.subscriber?.entitlements?.premium?.expires_date &&
         new Date(data.subscriber.entitlements.premium.expires_date) > new Date();
 
       console.log(`${isPremium ? '✅' : '⚠️'} Statut premium: ${isPremium}`);
-      
+
       // Si premium trouvé, on retourne immédiatement
       if (isPremium) {
         return true;
       }
-      
+
       // Si pas premium mais c'est pas le dernier essai, on réessaie
       // (peut-être que RevenueCat est en train de propager)
       if (attempt < maxRetries) {
@@ -70,20 +61,19 @@ async function checkPremiumStatusWithRetry(revenuecatId, maxRetries = 5, delayMs
         await new Promise(resolve => setTimeout(resolve, delayMs));
         continue;
       }
-      
+
       // Dernier essai et toujours pas premium
       return false;
 
     } catch (error) {
       console.error(`❌ Erreur tentative ${attempt}:`, error.message);
-      
+
       if (attempt < maxRetries) {
         console.log(`⏳ Attente de ${delayMs}ms avant nouvelle tentative...`);
         await new Promise(resolve => setTimeout(resolve, delayMs));
       }
     }
   }
-
   return null;
 }
 
@@ -267,10 +257,10 @@ router.get('/credits', checkToken, async (req, res) => {
     const used = (!quota || needsReset) ? 0 : quota.scanCount;
 
     res.json({
-      result:    true,
+      result: true,
       isPremium: false,
       used,
-      limit:     FREE_MONTHLY_LIMIT,
+      limit: FREE_MONTHLY_LIMIT,
       remaining: Math.max(0, FREE_MONTHLY_LIMIT - used),
     });
   } catch (err) {
@@ -305,7 +295,7 @@ router.post('/credits/migrate', checkToken, async (req, res) => {
       // Additionne les crédits anonymes aux crédits déjà utilisés sur le compte.
       // Exemple : 5 utilisés sur le compte + 3 anonymes = 8/10 utilisés.
       userQuota.scanCount = userQuota.scanCount + anonQuota.scanCount;
-      userQuota.resetAt   = userQuota.resetAt ?? new Date();
+      userQuota.resetAt = userQuota.resetAt ?? new Date();
       await userQuota.save();
     } else {
       // Nouveau compte : le compteur démarre au nombre de crédits utilisés en anonyme.
@@ -314,7 +304,7 @@ router.post('/credits/migrate', checkToken, async (req, res) => {
         userId,
         deviceId: null,
         scanCount: anonQuota.scanCount,
-        resetAt:   new Date(),
+        resetAt: new Date(),
       });
     }
 

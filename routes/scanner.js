@@ -91,7 +91,8 @@ router.post('/scan-receipt', scanRateLimit, validateScanRequest, aiCredits, asyn
     if (!Array.isArray(geminiResult?.items)) {
       await req.consumeCredit?.();
       return res.status(200).json({
-        result:   true,
+        result:          true,
+        creditConsumed:  true,
         store:    geminiResult?.store || '',
         date:     geminiResult?.date  || '',
         currency: geminiResult?.currency || '€',
@@ -131,7 +132,8 @@ router.post('/scan-receipt', scanRateLimit, validateScanRequest, aiCredits, asyn
 
     await req.consumeCredit?.();
     return res.status(200).json({
-      result:   true,
+      result:          true,
+      creditConsumed:  true,
       store:    geminiResult.store    || '',
       date:     geminiResult.date     || '',
       currency: geminiResult.currency || '€',

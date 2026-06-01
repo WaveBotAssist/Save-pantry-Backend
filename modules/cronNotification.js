@@ -15,132 +15,184 @@ function formatNamesShort(names) {
 }
 
 // --- Cron ---
-cron.schedule('* * * * *', async () => {
-  console.log("📅 Vérification des dates de péremption et envoi des notifications...");
+// Tourne toutes les heures à H:00 — chaque utilisateur reçoit sa notif
+// à l’heure qu’il a choisie dans ses paramètres (ex: 9h, 18h…)
+// ============================================================================
+// CRON PRODUITS BIENTÔT PÉRIMÉS
+// ============================================================================
+//
+// Tourne toutes les heures.
+// Chaque utilisateur reçoit sa notification à l'heure définie
+// dans ses paramètres.
+//
+// Notifications :
+// - J-3 : expire dans 3 jours
+// - J-1 : expire demain
+// - Expiré : déjà périmé
+//
+// ============================================================================
+
+cron.schedule("0 * * * *", async () => {
+  console.log("📅 Vérification des dates de péremption");
+
   try {
+    const users = await User.find(
+      {
+        "notificationSettings.expiry.enabled": true,
+      },
+      "email tokenpush myproducts language notificationSettings"
+    );
 
-  const users = await User.find(
-    { 'notificationSettings.expiry.enabled': true },
-    'email tokenpush myproducts language notificationSettings'
-  );
+    for (const user of users) {
 
+      // ----------------------------------------------------------------------
+      // Langue utilisateur
+      // ----------------------------------------------------------------------
 
-  const nowUtc = moment.utc();
-  const currentDate = new Date();
-  currentDate.setHours(0, 0, 0, 0);
+      const userLang = user.language || "fr";
+      i18next.changeLanguage(userLang);
 
-  for (let element of users) {
-    const userLang = element.language || 'fr';
-    i18next.changeLanguage(userLang);
+      // ----------------------------------------------------------------------
+      // Fuseau horaire utilisateur
+      // ----------------------------------------------------------------------
 
-    const userTimezone = element.notificationSettings.expiry.timezone || 'Europe/Brussels';
-    const userHour = nowUtc.clone().tz(userTimezone).hour();
-    const userMinute = nowUtc.clone().tz(userTimezone).minute();
+      const timezone =
+        user.notificationSettings?.expiry?.timezone ||
+        "Europe/Brussels";
 
-    // ✅ envoyer seulement à l’heure prévue
-    if (userHour === element.notificationSettings.expiry.hour) {
-      console.log(`⏰ Notification pour ${element.email} (${userTimezone})`);
+      const notificationHour =
+        user.notificationSettings?.expiry?.hour ?? 9;
 
-      let productsSoon = [];
-      let productsToday = [];
-      let productsExpired = [];
-      
+      const currentHour = moment()
+        .tz(timezone)
+        .hour();
 
-      // Parcours des produits
-      for (let p of element.myproducts) {
-        if (!p?.expiration) continue;
+      // ----------------------------------------------------------------------
+      // On envoie uniquement à l'heure choisie
+      // ----------------------------------------------------------------------
 
-        const exp = new Date(p.expiration);
-        if (isNaN(exp.getTime())) continue;
+      if (currentHour !== notificationHour) {
+        continue;
+      }
 
-        exp.setHours(0, 0, 0, 0);
-        const diffInDays = Math.floor((exp - currentDate) / (1000 * 60 * 60 * 24));
+      console.log(
+        `⏰ Notification pour ${user.email}`
+      );
 
-        console.log(`Produit: ${p.name}, expiration: ${exp.toISOString()}, diffInDays=${diffInDays}`);
+      const productsJ3 = [];
+      const productsJ1 = [];
+      const productsExpired = [];
 
-        if (diffInDays === 3) {
-          if (productsSoon.length < 2) productsSoon.push(p.name);
-        } else if (diffInDays === 0) {
-          if (productsToday.length < 2) productsToday.push(p.name);
-        } else if (diffInDays < 0 && !p.notifiedExpired) {
-          // ⚡ Seulement si pas déjà notifié
-          if (productsExpired.length < 2) productsExpired.push(p.name);
+      const today = moment()
+        .tz(timezone)
+        .startOf("day");
 
-          // Marquer comme notifié en BDD
+      // ----------------------------------------------------------------------
+      // Analyse des produits
+      // ----------------------------------------------------------------------
+
+      for (const product of user.myproducts) {
+
+        if (!product?.expiration) {
+          continue;
+        }
+
+        const expirationDate = moment(product.expiration)
+          .tz(timezone)
+          .startOf("day");
+
+        if (!expirationDate.isValid()) {
+          continue;
+        }
+
+        const daysLeft = expirationDate.diff(
+          today,
+          "days"
+        );
+
+        // --------------------------------------------------
+        // Expire dans 3 jours
+        // --------------------------------------------------
+
+        if (daysLeft === 3) {
+          productsJ3.push(product.name);
+        }
+
+        // --------------------------------------------------
+        // Expire demain
+        // --------------------------------------------------
+
+        else if (daysLeft === 1) {
+          productsJ1.push(product.name);
+        }
+
+        // --------------------------------------------------
+        // Déjà expiré
+        // --------------------------------------------------
+
+        else if ( daysLeft < 0 && !product.notifiedExpired) {
+          productsExpired.push(product.name);
+
           await User.updateOne(
-            { _id: element._id, "myproducts._id": p._id },
-            { $set: { "myproducts.$.notifiedExpired": true } }
+            {
+              _id: user._id,
+              "myproducts._id": product._id,
+            },
+            {
+              $set: {
+                "myproducts.$.notifiedExpired": true,
+              },
+            }
           );
         }
       }
 
+      // ----------------------------------------------------------------------
+      // Construction du message
+      // ----------------------------------------------------------------------
 
-      // --- Construire message combiné ---
-      let segments = [];
+      const segments = [];
 
-      // Expired
-      const expiredCount = element.myproducts.filter(p => {
-        if (!p?.expiration) return false;
-         if (p?.notifiedExpired) return false;
-        const exp = new Date(p.expiration);
-        if (isNaN(exp.getTime())) return false;
-        exp.setHours(0, 0, 0, 0);
-        return exp < currentDate;
-      }).length;
-
-      if (expiredCount > 0) {
-        if (expiredCount <= 2) {
-          segments.push(i18next.t("expired_names", { names: formatNamesShort(productsExpired) }));
-        } else {
-          segments.push(i18next.t("expired_many", { count: expiredCount }));
-        }
+      if (productsExpired.length > 0) {
+        segments.push(
+          `⚠️ ${productsExpired.length} produit(s) sont expirés`
+        );
       }
 
-      // Today
-      const todayCount = element.myproducts.filter(p => {
-        if (!p?.expiration) return false;
-        const exp = new Date(p.expiration);
-        if (isNaN(exp.getTime())) return false;
-        exp.setHours(0, 0, 0, 0);
-        return (exp.getTime() === currentDate.getTime());
-      }).length;
-
-      if (todayCount > 0) {
-        if (todayCount <= 2) {
-          segments.push(i18next.t("today_names", { names: formatNamesShort(productsToday) }));
-        } else {
-          segments.push(i18next.t("today_many", { count: todayCount }));
-        }
+      if (productsJ1.length > 0) {
+        segments.push(
+          `⏳ ${productsJ1.length} produit(s) expirent demain`
+        );
       }
 
-      // Soon (J-3)
-      const soonCount = element.myproducts.filter(p => {
-        if (!p?.expiration) return false;
-        const exp = new Date(p.expiration);
-        if (isNaN(exp.getTime())) return false;
-        exp.setHours(0, 0, 0, 0);
-        return Math.floor((exp - currentDate) / (1000 * 60 * 60 * 24)) === 3;
-      }).length;
-
-      if (soonCount > 0) {
-        if (soonCount <= 2) {
-          segments.push(i18next.t("soon_names", { names: formatNamesShort(productsSoon) }));
-        } else {
-          segments.push(i18next.t("soon_many", { count: soonCount }));
-        }
+      if (productsJ3.length > 0) {
+        segments.push(
+          `📅 ${productsJ3.length} produit(s) expirent dans 3 jours`
+        );
       }
 
-      // Concaténer les segments
-      let message = segments.join(" ");
+      const message = segments.join(" • ");
+
+      // ----------------------------------------------------------------------
+      // Envoi de la notification
+      // ----------------------------------------------------------------------
 
       if (message) {
-        console.log(`📨 ${element.email} : ${message}`);
-        await sendPushNotification(element.tokenpush, message);
+        console.log(
+          `📨 ${user.email} -> ${message}`
+        );
+
+        await sendPushNotification(
+          user.tokenpush,
+          message
+        );
       }
     }
-  }
-  } catch (err) {
-    console.error('❌ Erreur cron expiry notifications:', err);
+  } catch (error) {
+    console.error(
+      "❌ Erreur cron produits expirés",
+      error
+    );
   }
 });
 

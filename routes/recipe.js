@@ -345,7 +345,7 @@ router.post('/personal', async (req, res) => {
     }
 
     const imageUrl = image || '';
-
+    
     const recipe = new UserRecipe({
       userId: req.user._id,
       titre: titre.trim(),
@@ -359,7 +359,6 @@ router.post('/personal', async (req, res) => {
       source: source || 'manual',
       sourceUrl: sourceUrl || '',
     });
-
     await recipe.save();
     const io = req.app.get('io');
     io.to(`user-${req.user._id}`).emit('recipes-updated');

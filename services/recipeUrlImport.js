@@ -155,6 +155,72 @@ function extractJsonLdBlocks(rawHtml) {
   return blocks;
 }
 
+// Catégories trop génériques — ne donnent pas d'info sur le type de plat
+const GENERIC_CATEGORIES = ['dinner','lunch','supper','meal','dish','recipe','food',
+  'main course','main dish','entree','plat','repas','cuisine'];
+
+// Mots-clés dans le titre/ingrédients → catégorie canonique
+// Ordre important : du plus spécifique au plus général
+const KEYWORD_RULES = [
+  // Plats identifiables par leur contenu
+  { cat: 'Soupe',          re: /soupe|potage|veloute|bouillon|bisque|soup|ramen|pho|gaspacho|gazpacho|minestrone|chowder|bouillabaisse|goulash|veloute/ },
+  { cat: 'Salade',         re: /\bsalade\b|\bsalad\b/ },
+  { cat: 'Pates',          re: /\bpates?\b|pasta|spaghetti|tagliatelle|gnocchi|ravioli|lasagne|penne|rigatoni|fettuccine|linguine|nouille|noodle|macaroni|carbonara|bolognese/ },
+  { cat: 'Riz',            re: /risotto|paella|\briz\b|\brice\b|pilaf|fried\s*rice/ },
+  { cat: 'Dessert',        re: /gateau|cake|dessert|brownie|cookie|biscuit|muffin|cupcake|tiramisu|cheesecake|mousse|pudding|glace|sorbet|macaron|eclair|crepe\s*sucre|tarte\s*(sucre|tatin|aux|pomme|citron|fraise|framboise|chocolat)|fondant|clafoutis|flan|creme\s*brulee|financier|moelleux|profiterole|choux|meringue|bavarois|panna\s*cotta|crumble|cobbler|torte|strudel|pie\s*(aux|sucr|\bapple|\bcherry|\blemon)|apple\s*pie|lemon\s*pie|trifle|halva|baklava|compote/ },
+  { cat: 'Boisson',        re: /smoothie|cocktail|limonade|lemonade|milkshake|sirop|infusion|\bjus\s+de\b|jus\s+d'|juice|sangria|punch|mocktail/ },
+  // Moment de la journée ou occasion
+  { cat: 'Petit-déjeuner', re: /petit[\s-]dejeuner|breakfast|pancake|waffle|granola|oatmeal|porridge|pain\s*perdu|french\s*toast|muesli|scone|tartine|croissant|brioche|pain\s*au\s*chocolat|kouign|bostock/ },
+  { cat: 'Brunch',         re: /brunch|eggs?\s*benedict|avocado\s*toast|shakshuka/ },
+  { cat: 'Apéritif',       re: /aperitif|apero|tapas|amuse[\s-]?bouche|canapé|canape|finger\s*food|dip\b|tzatziki|guacamole|houmous|hummus/ },
+  { cat: 'Collation',      re: /collation|gouter|energy\s*ball|protein\s*bar|barre\s*cereal|muesli\s*bar/ },
+  { cat: 'Déjeuner',       re: /\bdejeuner\b|\blunch\b/ },
+  { cat: 'Dîner',          re: /\bdiner\b|\bdinner\b|\bsupper\b/ },
+  // Type de plat
+  { cat: 'Entrée',         re: /\bentree\b|bruschetta|carpaccio|tartare|verrines|terrine|rillettes|foie\s*gras|escargot|ceviche|blinis/ },
+  { cat: 'Viande',         re: /\bsteak\b|boeuf\s*bourguignon|coq\s*au\s*vin|poulet\s*roti|roti\s*de|pot[\s-]au[\s-]feu|blanquette|gigot|carre\s*d.agneau|grille|grill|bbq|barbeque|barbecue|escalope|magret|canard\s*roti|lapin\s*a|veau|agneau\s*roti|tenderloin|roast\b|brisket|\bribs\b|pork\s*chop|chicken\s*breast|osso\s*buco|saltimbocca|dinde\s*roti|turkey\s*roast|côte\s*de|cotoletta/ },
+  { cat: 'Plat principal',  re: /gratin|quiche|tarte\s*sal|pizza|burger|tourte|clafoutis\s*sale|casserole|tajine|tagine|curry|wok|poele|fricassee|daube|ragoût|ragout|stew|ratatouille|cassoulet|omelette|frittata|croque[\s-]|hachis\s*parmentier|shepherd.s\s*pie|moussaka|lasagne|enchilada|burrito|wrap\b|pad\s*thai|chili\b|fish\s*and\s*chips|fried\s*chicken|stir[\s-]fry|pot\s*pie|farci|farcie|stuffed/ },
+];
+
+/**
+ * Détermine la catégorie canonique à partir de :
+ *   1. La catégorie JSON-LD (si spécifique et non générique)
+ *   2. Le titre de la recette (le plus fiable)
+ *   3. Les 3 premiers ingrédients (fallback)
+ */
+function inferCategory(rawCategory, titre, ingredients) {
+  const norm = (str) => (str || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+  // Étape 1 : catégorie JSON-LD — utilisée seulement si non générique
+  if (rawCategory) {
+    const rawLow = norm(rawCategory).replace(/s$/, '');
+    const isGeneric = GENERIC_CATEGORIES.some(g => rawLow.includes(g));
+    if (!isGeneric) {
+      for (const { cat, re } of KEYWORD_RULES) {
+        if (re.test(rawLow)) return cat;
+      }
+    }
+  }
+
+  // Étape 2 : mots-clés dans le titre (le signal le plus fort)
+  if (titre) {
+    const t = norm(titre);
+    for (const { cat, re } of KEYWORD_RULES) {
+      if (re.test(t)) return cat;
+    }
+  }
+
+  // Étape 3 : mots-clés dans les 3 premiers ingrédients
+  if (ingredients && ingredients.length > 0) {
+    const ing = norm(ingredients.slice(0, 3).join(' '));
+    for (const { cat, re } of KEYWORD_RULES) {
+      if (re.test(ing)) return cat;
+    }
+  }
+
+  return 'Autre';
+}
+
 function extractFromJsonLd($, ogImage, rawHtml) {
   // Essaie le parseur par accolades (gère </script> dans les strings JSON)
   // ET le parseur cheerio (plus fiable sur les JSON bien formés).
@@ -183,7 +249,11 @@ function extractFromJsonLd($, ogImage, rawHtml) {
       temps_preparation: parseIsoDuration(recipe.prepTime) || parseIsoDuration(recipe.totalTime),
       portion:           parseRecipeYield(recipe.recipeYield),
       image:             parseRecipeImage(recipe.image) || ogImage || '',
-      categorie:         decodeEntities(recipe.recipeCategory || 'Autre'),
+      categorie:         inferCategory(
+        decodeEntities(Array.isArray(recipe.recipeCategory) ? recipe.recipeCategory[0] : (recipe.recipeCategory || '')),
+        titre,
+        ingredients
+      ),
       confidence:        1,
     };
   }

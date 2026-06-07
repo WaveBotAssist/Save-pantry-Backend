@@ -33,80 +33,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-/* ------------------------------------------------------------
-   POST /planning/day  → upsert d'un seul jour
-   body: { weekStart, dayKey, day }
-   day = { recipes: [], stockItems: [], consumed: bool }
------------------------------------------------------------- */
-router.post('/day', async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { weekStart, dayKey, day } = req.body;
-
-    if (!weekStart || !dayKey || !day) {
-      return res.status(400).json({
-        result: false,
-        error: 'weekStart, dayKey et day sont obligatoires',
-      });
-    }
-
-    let planning = await Planning.findOne({ userId });
-
-    // Si aucun planning → on en crée un
-    if (!planning) {
-      planning = new Planning({
-        userId,
-        weeks: [],
-      });
-    }
-
-    // Chercher la semaine dans le tableau
-    let week = planning.weeks.find(w => w.weekStart === weekStart);
-
-    // Si pas de semaine → on la crée proprement pour Mongoose
-    if (!week) {
-      planning.weeks.push({
-        weekStart,
-        days: {}, // Mongoose va caster en Map automatiquement
-      });
-      week = planning.weeks[planning.weeks.length - 1];
-    }
-
-    // ⚠️ ici, week.days est un MongooseMap (ou va le devenir)
-    // On s’assure d’avoir bien une instance utilisable en .set()
-    // Normalement week.days a déjà une méthode .set
-    if (typeof week.days.set !== "function") {
-      // au cas où, fallback vers un objet simple
-      week.days = new Map(Object.entries(week.days || {}));
-    }
-
-    // Upsert du jour dans la Map
-    week.days.set(dayKey, {
-      recipes: day.recipes || [],
-      stockItems: day.stockItems || [],
-      consumed: !!day.consumed,
-    });
-
-    // Nettoyage éventuel du planning (fonction existante)
-    cleanPlanning(planning, 60);
-
-    // On marque le champ comme modifié pour être sûr que Mongoose le persiste
-    planning.markModified('weeks');
-    await planning.save();
-
-    // Notifier tous les devices de cet utilisateur
-    req.app.get('io')
-      .to(`planning-${userId}`)
-      .emit('planning-updated', { weekStart });
-
-    // On renvoie juste la semaine mise à jour (optionnel pour le front)
-    res.json({ result: true, weekStart, dayKey });
-
-  } catch (e) {
-    console.error('❌ [POST /planning/day] Error:', e);
-    res.status(500).json({ result: false, error: e.message });
-  }
-});
 
 /* ------------------------------------------------------------
    POST /planning/inventory/consume
@@ -262,25 +188,269 @@ router.post('/inventory/undo', async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   POST /planning/meal  — Ajoute ou remplace un repas dans un créneau
+   body: { weekStart, dayKey, slot, recipeId, recipeTitle, recipeImage? }
+───────────────────────────────────────────────────────────────────────────── */
+router.post('/meal', async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { weekStart, dayKey, slot, recipeId, recipeTitle, recipeImage } = req.body;
+
+    if (!weekStart || !dayKey || !slot) {
+      return res.status(400).json({ result: false, error: 'weekStart, dayKey et slot sont obligatoires.' });
+    }
+
+    let planning = await Planning.findOne({ userId });
+    if (!planning) planning = new Planning({ userId, weeks: [] });
+
+    let week = planning.weeks.find(w => w.weekStart === weekStart);
+    if (!week) {
+      planning.weeks.push({ weekStart, days: {} });
+      week = planning.weeks[planning.weeks.length - 1];
+    }
+
+    if (typeof week.days.set !== 'function') {
+      week.days = new Map(Object.entries(week.days || {}));
+    }
+
+    const dayData = week.days.get(dayKey) || { recipes: [], stockItems: [], consumed: false };
+    dayData.recipes = (dayData.recipes || []).filter(r => r.slot !== slot);
+    dayData.recipes.push({ recipeId: recipeId || null, title: recipeTitle || '', slot });
+
+    week.days.set(dayKey, dayData);
+    cleanPlanning(planning, 60);
+    planning.markModified('weeks');
+    await planning.save();
+
+    req.app.get('io').to(`planning-${userId}`).emit('planning-updated', { weekStart });
+    res.json({ result: true });
+  } catch (e) {
+    console.error('❌ [POST /planning/meal]', e);
+    res.status(500).json({ result: false, error: e.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   DELETE /planning/meal  — Retire un repas d'un créneau
+   body: { weekStart, dayKey, slot }
+───────────────────────────────────────────────────────────────────────────── */
+router.delete('/meal', async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { weekStart, dayKey, slot } = req.body;
+
+    if (!weekStart || !dayKey || !slot) {
+      return res.status(400).json({ result: false, error: 'weekStart, dayKey et slot sont obligatoires.' });
+    }
+
+    const planning = await Planning.findOne({ userId });
+    if (!planning) return res.json({ result: true });
+
+    const week = planning.weeks.find(w => w.weekStart === weekStart);
+    if (!week) return res.json({ result: true });
+
+    if (typeof week.days.set !== 'function') {
+      week.days = new Map(Object.entries(week.days || {}));
+    }
+
+    const dayData = week.days.get(dayKey);
+    if (dayData) {
+      dayData.recipes = (dayData.recipes || []).filter(r => r.slot !== slot);
+      week.days.set(dayKey, dayData);
+      planning.markModified('weeks');
+      await planning.save();
+    }
+
+    req.app.get('io').to(`planning-${userId}`).emit('planning-updated', { weekStart });
+    res.json({ result: true });
+  } catch (e) {
+    console.error('❌ [DELETE /planning/meal]', e);
+    res.status(500).json({ result: false, error: e.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POST /planning/bulk-meals  — Enregistre en lot les repas générés par l'IA
+   body: { meals: [{weekStart, dayKey, slot, recipeId, recipeTitle}] }
+───────────────────────────────────────────────────────────────────────────── */
+router.post('/bulk-meals', async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { meals } = req.body;
+
+    if (!Array.isArray(meals) || meals.length === 0) {
+      return res.status(400).json({ result: false, error: 'meals doit être un tableau non vide.' });
+    }
+
+    let planning = await Planning.findOne({ userId });
+    if (!planning) planning = new Planning({ userId, weeks: [] });
+
+    // Grouper par weekStart pour traiter chaque semaine une seule fois
+    const weekGroups = {};
+    for (const meal of meals) {
+      if (!weekGroups[meal.weekStart]) weekGroups[meal.weekStart] = [];
+      weekGroups[meal.weekStart].push(meal);
+    }
+
+    for (const [weekStart, weekMeals] of Object.entries(weekGroups)) {
+      let week = planning.weeks.find(w => w.weekStart === weekStart);
+      if (!week) {
+        planning.weeks.push({ weekStart, days: {} });
+        week = planning.weeks[planning.weeks.length - 1];
+      }
+      if (typeof week.days.set !== 'function') {
+        week.days = new Map(Object.entries(week.days || {}));
+      }
+
+      for (const meal of weekMeals) {
+        const dayData = week.days.get(meal.dayKey) || { recipes: [], stockItems: [], consumed: false };
+        dayData.recipes = (dayData.recipes || []).filter(r => r.slot !== meal.slot);
+        dayData.recipes.push({ recipeId: meal.recipeId || null, title: meal.recipeTitle || '', slot: meal.slot });
+        week.days.set(meal.dayKey, dayData);
+      }
+    }
+
+    cleanPlanning(planning, 60);
+    planning.markModified('weeks');
+    await planning.save();
+
+    const io = req.app.get('io');
+    for (const weekStart of Object.keys(weekGroups)) {
+      io.to(`planning-${userId}`).emit('planning-updated', { weekStart });
+    }
+
+    res.json({ result: true });
+  } catch (e) {
+    console.error('❌ [POST /planning/bulk-meals]', e);
+    res.status(500).json({ result: false, error: e.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POST /planning/recipe-stock-suggestions
+   body: { recipeId }
+   Retourne les produits du garde-manger qui correspondent aux ingrédients
+   de la recette, pour permettre à l'utilisateur de déduire son stock.
+───────────────────────────────────────────────────────────────────────────── */
+const UserRecipe = require('../models/userRecipe');
+
+router.post('/recipe-stock-suggestions', async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { recipeId } = req.body;
+
+    if (!recipeId) return res.status(400).json({ result: false, error: 'recipeId manquant.' });
+
+    const [user, recipe] = await Promise.all([
+      User.findById(userId).select('myproducts'),
+      UserRecipe.findOne({ _id: recipeId, userId }).select('titre ingredients'),
+    ]);
+
+    if (!recipe) return res.status(404).json({ result: false, error: 'Recette introuvable.' });
+
+    const matches = [];
+    const usedProductIds = new Set();
+
+    for (const ingredient of (recipe.ingredients || [])) {
+      const ingLower = ingredient.toLowerCase();
+      // Nettoyer le nom de l'ingrédient en retirant quantités et unités communes
+      const ingName = ingLower
+        .replace(/^\d+[\.,]?\d*\s*(g|kg|ml|cl|l|litres?|grammes?|kilos?|cuillères?|c\.?\s*à\s*[sc]\.?|pincée[s]?|tranches?|unités?|pièces?)\s*(à|de|d')?/i, '')
+        .replace(/^(de |d'|du |des |un |une |quelques )/i, '')
+        .trim();
+
+      for (const product of (user.myproducts || [])) {
+        if (usedProductIds.has(String(product._id))) continue;
+        const prodLower = product.name.toLowerCase();
+        if (ingName.includes(prodLower) || prodLower.includes(ingName) || ingLower.includes(prodLower)) {
+          // Essayer de parser la quantité depuis la chaîne ingrédient
+          const qtyMatch = ingredient.match(/^(\d+[\.,]?\d*)/);
+          const suggestedQty = qtyMatch ? parseFloat(qtyMatch[1].replace(',', '.')) : 1;
+
+          matches.push({
+            productId: String(product._id),
+            name: product.name,
+            available: product.quantite ?? 0,
+            unit: product.unit ?? '',
+            suggestedQty: Math.min(suggestedQty, product.quantite ?? 0),
+            ingredient,
+          });
+          usedProductIds.add(String(product._id));
+          break;
+        }
+      }
+    }
+
+    res.json({ result: true, matches, recipeTitle: recipe.titre });
+  } catch (e) {
+    console.error('❌ [POST /planning/recipe-stock-suggestions]', e);
+    res.status(500).json({ result: false, error: e.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POST /planning/consume-stock
+   body: { items: [{productId, qty}] }
+   Déduit des quantités du garde-manger sans dépendance planning.
+───────────────────────────────────────────────────────────────────────────── */
+router.post('/consume-stock', async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { items } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ result: false, error: 'items doit être un tableau non vide.' });
+    }
+
+    const user = await User.findById(userId).select('myproducts');
+    const byId = new Map((user.myproducts || []).map(p => [String(p._id), p]));
+
+    for (const it of items) {
+      const product = byId.get(String(it.productId));
+      if (product) {
+        product.quantite = Math.max(0, (product.quantite ?? 0) - (it.qty ?? 0));
+      }
+    }
+
+    await user.save();
+
+    req.app.get('io')
+      .to(`planning-${userId}`)
+      .emit('stock-updated', { myproducts: user.myproducts });
+
+    res.json({ result: true });
+  } catch (e) {
+    console.error('❌ [POST /planning/consume-stock]', e);
+    res.status(500).json({ result: false, error: e.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
    POST /planning/generate  — Génération IA d'un planning anti-gaspillage
-   body: { weekStart: string (YYYY-MM-DD) }
+   body: { weekStart: string (YYYY-MM-DD), duration?: "1week" | "2weeks" }
    Analyse le garde-manger + les recettes de l'utilisateur et propose
-   un dîner par jour de la semaine en priorisant les aliments proches
-   de leur date d'expiration.
+   un dîner par jour en priorisant les aliments proches de leur expiration.
 ───────────────────────────────────────────────────────────────────────────── */
 const { generateWeeklyPlan } = require('../services/recipeAI');
-const UserRecipe = require('../models/userRecipe');
 
 router.post('/generate', aiCredits, async (req, res) => {
   try {
-    const { weekStart } = req.body;
+    const { weekStart, duration = '1week' } = req.body;
     const userId = req.user._id;
 
     if (!weekStart) {
       return res.status(400).json({ result: false, error: 'weekStart manquant (format YYYY-MM-DD).' });
     }
 
-    // Récupérer le garde-manger et les recettes personnelles en parallèle
+    const numberOfDays = duration === '2weeks' ? 14 : 7;
+
+    // Générer le tableau de dates à planifier
+    const dates = Array.from({ length: numberOfDays }, (_, i) => {
+      const d = new Date(weekStart + 'T12:00:00');
+      d.setDate(d.getDate() + i);
+      return d.toISOString().split('T')[0];
+    });
+
     const [user, rawRecipes] = await Promise.all([
       User.findById(userId).select('myproducts'),
       UserRecipe.find({ userId }).select('_id titre ingredients'),
@@ -290,19 +460,14 @@ router.post('/generate', aiCredits, async (req, res) => {
       return res.status(404).json({ result: false, error: 'Utilisateur introuvable.' });
     }
 
-    // Normaliser les ingrédients : dans userrecipes ce sont des strings,
-    // generateWeeklyPlan attend des objets { name, quantity, unit }
     const recipes = rawRecipes.map(r => ({
       _id: r._id,
       titre: r.titre,
       ingredients: (r.ingredients ?? []).map(ing =>
-        typeof ing === 'string'
-          ? { name: ing, quantity: '', unit: '' }
-          : ing
+        typeof ing === 'string' ? { name: ing, quantity: '', unit: '' } : ing
       ),
     }));
 
-    // Date du jour — utilisée pour le filtre d'expiration
     const today   = new Date();
     const in3days = new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000);
 
@@ -313,19 +478,13 @@ router.post('/generate', aiCredits, async (req, res) => {
       !p.expiration || new Date(p.expiration) > in3days
     );
 
-    // Mélange aléatoire des recettes pour varier les suggestions à chaque génération
-    const selectedRecipes = [...recipes]
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 40);
+    // Prendre plus de recettes pour les plans 2 semaines
+    const maxRecipes = numberOfDays > 7 ? 60 : 40;
+    const selectedRecipes = [...recipes].sort(() => Math.random() - 0.5).slice(0, maxRecipes);
 
-    console.log(`[planning/generate] ${recipes.length} recette(s) — ${expiringProducts.length} produit(s) expirant(s) — ${selectedRecipes.length} recette(s) envoyée(s) à Gemini`);
+    console.log(`[planning/generate] ${recipes.length} recette(s) — ${expiringProducts.length} expirant(s) — ${numberOfDays} jour(s) — ${selectedRecipes.length} recette(s) → Gemini`);
 
-    const plan = await generateWeeklyPlan(
-      expiringProducts,
-      otherProducts,
-      selectedRecipes,
-      weekStart
-    );
+    const plan = await generateWeeklyPlan(expiringProducts, otherProducts, selectedRecipes, dates);
 
     await req.consumeCredit?.();
     res.json({ result: true, plan });

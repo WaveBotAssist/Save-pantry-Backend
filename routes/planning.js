@@ -1,9 +1,11 @@
 // routes/planning.js
 const express = require('express');
+const mongoose = require('mongoose');
 const router = express.Router();
 const User = require('../models/users');
 const Planning = require('../models/planning');
 const { cleanPlanning } = require('../utils/cleanPlanning');
+const { parseIngredient, computeSuggestedQty } = require('../utils/ingredientParser');
 const aiCredits = require('../middlewares/aiCredits');
 
 
@@ -214,8 +216,14 @@ router.post('/meal', async (req, res) => {
     }
 
     const dayData = week.days.get(dayKey) || { recipes: [], stockItems: [], consumed: false };
-    dayData.recipes = (dayData.recipes || []).filter(r => r.slot !== slot);
-    dayData.recipes.push({ recipeId: recipeId || null, title: recipeTitle || '', slot });
+    dayData.recipes = dayData.recipes || [];
+    dayData.recipes.push({
+      _id:        new mongoose.Types.ObjectId(),
+      recipeId:   recipeId || null,
+      title:      recipeTitle || '',
+      image:      recipeImage || null,
+      slot,
+    });
 
     week.days.set(dayKey, dayData);
     cleanPlanning(planning, 60);
@@ -231,16 +239,16 @@ router.post('/meal', async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   DELETE /planning/meal  — Retire un repas d'un créneau
-   body: { weekStart, dayKey, slot }
+   DELETE /planning/meal  — Retire un repas précis (identifié par mealId)
+   body: { weekStart, dayKey, mealId }
 ───────────────────────────────────────────────────────────────────────────── */
 router.delete('/meal', async (req, res) => {
   try {
     const userId = req.user._id;
-    const { weekStart, dayKey, slot } = req.body;
+    const { weekStart, dayKey, mealId } = req.body;
 
-    if (!weekStart || !dayKey || !slot) {
-      return res.status(400).json({ result: false, error: 'weekStart, dayKey et slot sont obligatoires.' });
+    if (!weekStart || !dayKey || !mealId) {
+      return res.status(400).json({ result: false, error: 'weekStart, dayKey et mealId sont obligatoires.' });
     }
 
     const planning = await Planning.findOne({ userId });
@@ -255,7 +263,7 @@ router.delete('/meal', async (req, res) => {
 
     const dayData = week.days.get(dayKey);
     if (dayData) {
-      dayData.recipes = (dayData.recipes || []).filter(r => r.slot !== slot);
+      dayData.recipes = (dayData.recipes || []).filter(r => String(r._id) !== mealId);
       week.days.set(dayKey, dayData);
       planning.markModified('weeks');
       await planning.save();
@@ -271,7 +279,7 @@ router.delete('/meal', async (req, res) => {
 
 /* ─────────────────────────────────────────────────────────────────────────────
    POST /planning/bulk-meals  — Enregistre en lot les repas générés par l'IA
-   body: { meals: [{weekStart, dayKey, slot, recipeId, recipeTitle}] }
+   body: { meals: [{weekStart, dayKey, slot, recipeId, recipeTitle, image?}] }
 ───────────────────────────────────────────────────────────────────────────── */
 router.post('/bulk-meals', async (req, res) => {
   try {
@@ -304,8 +312,16 @@ router.post('/bulk-meals', async (req, res) => {
 
       for (const meal of weekMeals) {
         const dayData = week.days.get(meal.dayKey) || { recipes: [], stockItems: [], consumed: false };
-        dayData.recipes = (dayData.recipes || []).filter(r => r.slot !== meal.slot);
-        dayData.recipes.push({ recipeId: meal.recipeId || null, title: meal.recipeTitle || '', slot: meal.slot });
+        // Ne remplace que les anciennes suggestions IA sur ce créneau — laisse intacts les repas ajoutés manuellement
+        dayData.recipes = (dayData.recipes || []).filter(r => !(r.slot === meal.slot && r.source === 'ai'));
+        dayData.recipes.push({
+          _id:        new mongoose.Types.ObjectId(),
+          recipeId:   meal.recipeId || null,
+          title:      meal.recipeTitle || '',
+          image:      meal.image || null,
+          slot:       meal.slot,
+          source:     'ai',
+        });
         week.days.set(meal.dayKey, dayData);
       }
     }
@@ -352,27 +368,22 @@ router.post('/recipe-stock-suggestions', async (req, res) => {
     const usedProductIds = new Set();
 
     for (const ingredient of (recipe.ingredients || [])) {
-      const ingLower = ingredient.toLowerCase();
-      // Nettoyer le nom de l'ingrédient en retirant quantités et unités communes
-      const ingName = ingLower
-        .replace(/^\d+[\.,]?\d*\s*(g|kg|ml|cl|l|litres?|grammes?|kilos?|cuillères?|c\.?\s*à\s*[sc]\.?|pincée[s]?|tranches?|unités?|pièces?)\s*(à|de|d')?/i, '')
-        .replace(/^(de |d'|du |des |un |une |quelques )/i, '')
-        .trim();
+      const parsed  = parseIngredient(ingredient);
+      const ingName = parsed.name; // nom nettoyé, en minuscules, sans unités
+      const ingFull = ingredient.toLowerCase();
 
       for (const product of (user.myproducts || [])) {
         if (usedProductIds.has(String(product._id))) continue;
         const prodLower = product.name.toLowerCase();
-        if (ingName.includes(prodLower) || prodLower.includes(ingName) || ingLower.includes(prodLower)) {
-          // Essayer de parser la quantité depuis la chaîne ingrédient
-          const qtyMatch = ingredient.match(/^(\d+[\.,]?\d*)/);
-          const suggestedQty = qtyMatch ? parseFloat(qtyMatch[1].replace(',', '.')) : 1;
+        if (ingName.includes(prodLower) || prodLower.includes(ingName) || ingFull.includes(prodLower)) {
+          const suggestedQty = computeSuggestedQty(ingredient, product.unit ?? '', product.quantite ?? 0);
 
           matches.push({
             productId: String(product._id),
             name: product.name,
             available: product.quantite ?? 0,
             unit: product.unit ?? '',
-            suggestedQty: Math.min(suggestedQty, product.quantite ?? 0),
+            suggestedQty,
             ingredient,
           });
           usedProductIds.add(String(product._id));
@@ -452,7 +463,9 @@ router.post('/generate', aiCredits, async (req, res) => {
     });
 
     const [user, rawRecipes] = await Promise.all([
-      User.findById(userId).select('myproducts'),
+      User.findById(userId)
+        .select('myproducts favorites')
+        .populate({ path: 'favorites', select: '_id titre ingredients' }),
       UserRecipe.find({ userId }).select('_id titre ingredients'),
     ]);
 
@@ -460,13 +473,19 @@ router.post('/generate', aiCredits, async (req, res) => {
       return res.status(404).json({ result: false, error: 'Utilisateur introuvable.' });
     }
 
-    const recipes = rawRecipes.map(r => ({
+    // Fusionne recettes personnelles (créées + générées par l'IA) et favoris du
+    // catalogue — ce sont les seules recettes que l'IA peut proposer au planning
+    const recipes = [...rawRecipes, ...(user.favorites ?? [])].map(r => ({
       _id: r._id,
       titre: r.titre,
       ingredients: (r.ingredients ?? []).map(ing =>
         typeof ing === 'string' ? { name: ing, quantity: '', unit: '' } : ing
       ),
     }));
+
+    if (recipes.length === 0) {
+      return res.status(400).json({ result: false, error: 'no_recipes' });
+    }
 
     const today   = new Date();
     const in3days = new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000);

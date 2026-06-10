@@ -61,9 +61,10 @@ async function callGemini({ model, prompt, image, config = {} }, attempt = 1) {
     if (!text) throw new Error(`Réponse Gemini vide (model: ${model})`);
     return JSON.parse(text);
   } catch (err) {
-    // Retry sur surcharge (503) ou erreur réseau temporaire — max 3 tentatives
+    // Retry sur surcharge (503), erreur réseau temporaire, ou JSON malformé — max 3 tentatives
     const is503 = err?.code === 503 || err?.status === 'UNAVAILABLE' || err?.message?.includes('503');
-    if (is503 && attempt < 3) {
+    const isBadJson = err instanceof SyntaxError;
+    if ((is503 || isBadJson) && attempt < 3) {
       await new Promise(resolve => setTimeout(resolve, 2000));
       return callGemini({ model, prompt, image, config }, attempt + 1);
     }

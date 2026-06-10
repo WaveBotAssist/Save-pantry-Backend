@@ -101,11 +101,12 @@ Génère un planning dîner varié pour les ${dates.length} jours suivants :
 - ${daysList}
 
 RÈGLE PRIORITAIRE (anti-gaspillage) :
-1. Commence par les produits expirants. Pour chaque jour, cherche d'abord une recette qui en utilise le maximum.
-2. Si aucune recette ne les contient, propose une VRAIE recette connue qui utilise ces produits — recipeId: null.
-3. Une fois les produits expirants couverts, utilise librement les recettes disponibles pour les jours restants.
-4. Ne répète jamais le même plat. Varie les types (pasta, viande, légumes, soupe, wok, gratin, curry...).
-5. Si la liste est vide ou n'a pas assez de recettes, propose des plats connus (recipeId: null).
+1. Choisis UNIQUEMENT parmi les recettes de la liste ci-dessus — n'invente jamais de plat, recipeId doit toujours être un ID exact de cette liste.
+2. Commence par les produits expirants. Pour chaque jour, cherche d'abord la recette de la liste qui en utilise le maximum.
+3. Si aucune recette de la liste ne contient les produits expirants, choisis quand même une recette EXISTANTE de la liste pour ce jour.
+4. Chaque recette ne doit apparaître qu'UNE SEULE FOIS dans tout le planning — ne propose jamais deux fois le même recipeId, même à des dates différentes.
+5. Exception : si le nombre de jours dépasse le nombre de recettes disponibles, répète uniquement en dernier recours, et espace les répétitions le plus possible (jamais deux jours qui se suivent).
+6. Si la liste est vide, laisse "meals" vide — ne propose rien.
 
 JSON uniquement :
 {
@@ -113,7 +114,7 @@ JSON uniquement :
     {
       "date": "YYYY-MM-DD",
       "recipeTitle": "Nom du repas",
-      "recipeId": "id_exact_ou_null",
+      "recipeId": "id_exact_de_la_liste",
       "reason": "Utilise les courgettes et les œufs qui expirent demain"
     }
   ],
@@ -123,10 +124,10 @@ JSON uniquement :
 }
 
 - date : date exacte depuis la liste ci-dessus (format YYYY-MM-DD)
-- recipeId : ID exact de la recette depuis la liste, sinon null
+- recipeId : ID exact de la recette depuis la liste — jamais null, jamais inventé
 - reason : une phrase courte expliquant le choix
 - missingIngredients : ingrédients absents du stock nécessaires au planning`,
-    config: { temperature: 0.8, maxOutputTokens: dates.length > 7 ? 4096 : 2048 },
+    config: { temperature: 0.8, maxOutputTokens: dates.length > 7 ? 6144 : 3072 },
   });
 }
 

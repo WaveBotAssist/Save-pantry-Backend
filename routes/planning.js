@@ -3,9 +3,9 @@ const express = require('express');
 const mongoose = require('mongoose');
 const router = express.Router();
 const User = require('../models/users');
+const UserRecipe = require('../models/userRecipe');
 const Planning = require('../models/planning');
 const { cleanPlanning } = require('../utils/cleanPlanning');
-const { parseIngredient, computeSuggestedQty } = require('../utils/ingredientParser');
 const aiCredits = require('../middlewares/aiCredits');
 
 
@@ -338,63 +338,6 @@ router.post('/bulk-meals', async (req, res) => {
     res.json({ result: true });
   } catch (e) {
     console.error('❌ [POST /planning/bulk-meals]', e);
-    res.status(500).json({ result: false, error: e.message });
-  }
-});
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   POST /planning/recipe-stock-suggestions
-   body: { recipeId }
-   Retourne les produits du garde-manger qui correspondent aux ingrédients
-   de la recette, pour permettre à l'utilisateur de déduire son stock.
-───────────────────────────────────────────────────────────────────────────── */
-const UserRecipe = require('../models/userRecipe');
-
-router.post('/recipe-stock-suggestions', async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { recipeId } = req.body;
-
-    if (!recipeId) return res.status(400).json({ result: false, error: 'recipeId manquant.' });
-
-    const [user, recipe] = await Promise.all([
-      User.findById(userId).select('myproducts'),
-      UserRecipe.findOne({ _id: recipeId, userId }).select('titre ingredients'),
-    ]);
-
-    if (!recipe) return res.status(404).json({ result: false, error: 'Recette introuvable.' });
-
-    const matches = [];
-    const usedProductIds = new Set();
-
-    for (const ingredient of (recipe.ingredients || [])) {
-      const parsed  = parseIngredient(ingredient);
-      const ingName = parsed.name; // nom nettoyé, en minuscules, sans unités
-      const ingFull = ingredient.toLowerCase();
-
-      for (const product of (user.myproducts || [])) {
-        if (usedProductIds.has(String(product._id))) continue;
-        const prodLower = product.name.toLowerCase();
-        if (ingName.includes(prodLower) || prodLower.includes(ingName) || ingFull.includes(prodLower)) {
-          const suggestedQty = computeSuggestedQty(ingredient, product.unit ?? '', product.quantite ?? 0);
-
-          matches.push({
-            productId: String(product._id),
-            name: product.name,
-            available: product.quantite ?? 0,
-            unit: product.unit ?? '',
-            suggestedQty,
-            ingredient,
-          });
-          usedProductIds.add(String(product._id));
-          break;
-        }
-      }
-    }
-
-    res.json({ result: true, matches, recipeTitle: recipe.titre });
-  } catch (e) {
-    console.error('❌ [POST /planning/recipe-stock-suggestions]', e);
     res.status(500).json({ result: false, error: e.message });
   }
 });

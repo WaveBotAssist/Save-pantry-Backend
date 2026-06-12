@@ -55,6 +55,19 @@ router.delete('/r2/delete/:key', async (req, res) => {
 });
 
 
+/**
+ * Mélange Fisher-Yates — utilisé pour varier la sélection des recettes
+ * "Découvrir" qui n'ont aucun ingrédient du garde-manger, à chaque chargement.
+ */
+function melanger(tableau) {
+  const copie = [...tableau];
+  for (let i = copie.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copie[i], copie[j]] = [copie[j], copie[i]];
+  }
+  return copie;
+}
+
 //route pour recuperer les alliments de l'user et retourner des recettes qui corresponde a leur produits
 // Accessible en mode anonyme (req.user = null) : retourne toutes les recettes sans filtrage par stock
 router.post('/myrecipes', async (req, res) => {
@@ -113,7 +126,7 @@ router.post('/myrecipes', async (req, res) => {
     const maxTemps = parseInt(tempsMax) || null;
 
 
-    const recettesCompatibles = recettes.map(recette => {
+    const recettesFiltrees = recettes.map(recette => {
       const { ingredientsManquants, pourcentageCompatibilite, score } =
         calculerCompatibilite(recette, myproducts);
       return {
@@ -130,13 +143,18 @@ router.post('/myrecipes', async (req, res) => {
       .filter(r => !categorie || r.categorie.toLowerCase() === categorie.toLowerCase())
       // 5) Filtre par temps de préparation (facultatif)
       .filter(r => !maxTemps || r.temps_preparation === maxTemps)
-      // 6) Tri par pourcentage décroissant — mélange aléatoire si tous les scores sont à 0
-      // (garde-manger vide ou mode anonyme) pour varier l'ordre à chaque chargement
-      .sort((a, b) => {
-        if (a.pourcentageCompatibilite !== b.pourcentageCompatibilite)
-          return b.pourcentageCompatibilite - a.pourcentageCompatibilite;
-        return Math.random() - 0.5;
-      })
+
+    // 6) Tri : les recettes ayant au moins un ingrédient du garde-manger passent
+    // toujours en premier (triées par compatibilité décroissante). Les recettes
+    // sans aucune correspondance sont mélangées aléatoirement, pour varier la
+    // sélection proposée dans "Découvrir" à chaque chargement (utile en mode
+    // anonyme / garde-manger vide, où la plupart des recettes sont à 0%).
+    const recettesAvecStock = recettesFiltrees
+      .filter(r => r.pourcentageCompatibilite > 0)
+      .sort((a, b) => b.pourcentageCompatibilite - a.pourcentageCompatibilite);
+    const recettesSansStock = melanger(recettesFiltrees.filter(r => r.pourcentageCompatibilite === 0));
+
+    const recettesCompatibles = [...recettesAvecStock, ...recettesSansStock];
 
 
     // On slice le tableau pour la pagination
@@ -612,7 +630,7 @@ router.post('/import-url', async (req, res) => {
     const recipe = html
       ? extractRecipeFromHtml(html)
       : await extractRecipeFromUrl(url);
-
+   
     if (!recipe) {
       return res.status(422).json({
         result: false,

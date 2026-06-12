@@ -5,7 +5,7 @@ const User = require('../models/users')
 const { Expo } = require('expo-server-sdk');
 const expo = new Expo();
 const i18next = require('i18next');
-const { emitItemUpdated, emitItemDeleted, emitListDeleted, emitListUpdated } = require("../utils/socketSync");
+const { emitItemUpdated, emitItemDeleted, emitListDeleted, emitListUpdated } = require("../utils/shoppingListSync");
 
 
 // route pour créé liste de course et la partager

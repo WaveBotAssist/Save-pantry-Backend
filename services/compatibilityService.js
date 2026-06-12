@@ -9,9 +9,14 @@
  *
  * Stratégie :
  *   1. supprimerMesures() — retire toutes les formes de cuillère à soupe/café et unités
+ *      (y compris l'abréviation hybride "c. à soupe"/"c. à café" générée par l'IA),
+ *      ainsi que les indications de dosage libre ("au goût"/"to taste")
  *   2. Filtre les ingrédients fantômes (mesure seule sans nom de produit)
  *   3. produitPresent()   — matching mot-à-mot avec 3 garde-fous
  *   4. MOTS_MESURE_SEULS  — empêche les pures unités de mesure d'être en stock
+ *   5. stripAppellation() — pour les produits du stock avec une appellation
+ *      ("Œufs bio"), ajoute une variante sans ce mot ("œufs") pour matcher
+ *      les ingrédients de recette qui ne précisent pas l'appellation
  */
 
 /** Normalise une chaîne : minuscules, sans accents, sans ponctuation. */
@@ -110,17 +115,36 @@ const MOTS_QUANTITE = new Set([
  * Mots qui peuvent suivre un nom de produit sans en changer la nature.
  * "chocolat noir" reste du chocolat → autorisé.
  * "sauce barbecue" est un produit différent → "barbecue" n'est pas dans cette liste.
+ *
+ * Doit rester alignée avec QUALIFICATIFS_SIMPLES dans
+ * Frontend/src/shared/ingredients/ingredientMatching.ts (même rôle, deux moteurs
+ * de matching séparés : catalogue/favoris ici, fiche recette + planning côté front).
  */
 const QUALIFICATIFS_SIMPLES = new Set([
   // Couleurs / aspects
-  'noir', 'noire', 'blanc', 'blanche', 'rouge', 'vert', 'verte',
+  'noir', 'noire', 'blanc', 'blanche', 'rouge', 'vert', 'verte', 'bleu',
   'jaune', 'rose', 'brun', 'brune', 'dore', 'doree',
   // Intensité / degré
   'amer', 'amere', 'doux', 'douce', 'fort', 'forte', 'extra', 'mi',
   // Traitement / état
-  'frais', 'fraiche', 'entier', 'entiere', 'complet', 'complete',
+  'frais', 'fraiche', 'entier', 'entiere', 'entiers', 'entieres', 'complet', 'complete',
   'leger', 'legere', 'nature', 'naturel', 'naturelle',
-  'sec', 'seche', 'sale', 'sucre', 'sucree',
+  'sec', 'seche', 'sale', 'sucre', 'sucree', 'fin', 'fine', 'fins', 'fines',
+  // Texture / consistance
+  'cremeux', 'cremeuse', 'cremeuses',
+  'tendre', 'tendres', 'mou', 'molle', 'mous', 'molles',
+  'liquide', 'epais', 'epaisse', 'onctueux', 'onctueuse',
+  'veloute', 'veloutee', 'mousseux', 'mousseuse',
+  'soft', 'tender', 'runny', 'firm', 'hard',
+  // Composition / type
+  'demi', 'semi', 'allege', 'allegee', 'enrichi', 'enrichie',
+  'concentre', 'concentree', 'condense', 'condensee',
+  // Texture / consistance EN
+  'creamy', 'thick', 'liquid', 'smooth', 'silky', 'velvety', 'foamy',
+  // Composition / type EN
+  'half', 'enriched', 'fortified', 'reduced', 'skimmed', 'salted', 'unsalted', 'condensed', 'concentrated',
+  // Préparations EN — viennent après l'ingrédient ("lemon juice", "vanilla extract"...)
+  'juice', 'extract', 'coulis', 'puree', 'paste', 'powder', 'flakes', 'zest',
   // Préparation culinaire (ne change pas la nature de l'aliment)
   'dur', 'dure', 'durs', 'dures',
   'fondu', 'fondue', 'fondus', 'fondues',
@@ -135,12 +159,43 @@ const QUALIFICATIFS_SIMPLES = new Set([
   'grille', 'grillee', 'grilles', 'grillees',
   'epluchee', 'epluche', 'epluches', 'epluchees',
   'tamise', 'tamisee',
+  // Origine / élevage / qualité (FR) — "oeufs au sol", "poulet bio", "oeufs fermiers"
+  'sol', 'bio', 'fermier', 'fermiere', 'fermiers', 'fermieres', 'plein', 'label',
   // EN
   'dark', 'white', 'light', 'mild', 'strong', 'fresh', 'dried', 'whole',
   'sweet', 'bitter', 'plain', 'pure',
   'melted', 'beaten', 'grated', 'chopped', 'minced', 'sliced',
   'crushed', 'mashed', 'cooked', 'grilled', 'peeled', 'sifted',
+  'organic', 'free', 'range', 'farm',
 ]);
+
+// ─── Appellations produit ───────────────────────────────────────────────────
+
+/**
+ * Mots ajoutés en fin de nom de produit pour préciser sa provenance/qualité,
+ * mais qui ne changent pas la nature de l'aliment pour une recette.
+ * "Œufs bio" reste des œufs, "Poulet fermier" reste du poulet.
+ *
+ * Volontairement restreint aux mots sans ambiguïté : "rouge"/"label" sont
+ * exclus car "Riz rouge" ou "Vin rouge" sont des produits différents de
+ * "Riz"/"Vin" — les retirer changerait la nature de l'aliment.
+ */
+const MOTS_APPELLATION = new Set([
+  'bio', 'fermier', 'fermiere', 'fermiers', 'fermieres',
+]);
+
+/**
+ * Retire les mots d'appellation en fin de nom de produit normalisé.
+ * "oeufs bio" → "oeufs", "poulet fermier" → "poulet".
+ * Retourne la chaîne inchangée si aucun mot d'appellation en fin de nom.
+ */
+function stripAppellation(normProduit) {
+  const words = normProduit.split(' ');
+  while (words.length > 1 && MOTS_APPELLATION.has(words[words.length - 1])) {
+    words.pop();
+  }
+  return words.join(' ');
+}
 
 // ─── Logique principale ───────────────────────────────────────────────────────
 
@@ -174,6 +229,9 @@ function supprimerMesures(txt) {
   txt = txt.replace(/\bc\s+a\s+c\b/g, ' ');
   txt = txt.replace(/\bc\s+s\b/g,     ' ');
   txt = txt.replace(/\bc\s+c\b/g,     ' ');
+  // FR — abréviation hybride "c. à soupe" / "c. à café" (format produit par l'IA, recipeAI.js)
+  txt = txt.replace(/\bc\s+a\s+soupe\b/g, ' ');
+  txt = txt.replace(/\bc\s+a\s+cafe\b/g,  ' ');
   // FR — abréviations compactes
   txt = txt.replace(/\bcas\b/g, ' ');
   txt = txt.replace(/\bcac\b/g, ' ');
@@ -200,6 +258,12 @@ function supprimerMesures(txt) {
   // Quantificateurs (ex: "un peu de sel", "quelques rondelles de tomate")
   txt = txt.replace(/\bun\s+peu\s+de\b/g,    ' ');
   txt = txt.replace(/\ba\s+little\s+of\b/g,  ' ');
+
+  // Variétés / cultivars — tout ce qui suit est un nom de variété, pas l'aliment
+  // "4 pommes type Golden" → "4 pommes", "poires variété Louise-Bonne" → "poires"
+  // — la variété précise n'est jamais le nom du produit en stock ("Pommes").
+  txt = txt.replace(/\btypes?\b.*/i,    ' ');
+  txt = txt.replace(/\bvarietes?\b.*/i, ' ');
 
   // Articles et quantificateurs isolés — retirés AVANT les gardes pour ne pas les bloquer
   // Ex FR : "un oignon" → "oignon", "du beurre" → "beurre", "quelques tomates" → "tomates"
@@ -238,6 +302,11 @@ function supprimerMesures(txt) {
   txt = txt.replace(/\bfacultatif\b/g,  ' ');
   txt = txt.replace(/\boptionnel\b/g,   ' ');
   txt = txt.replace(/\boptional\b/g,    ' ');
+
+  // Indications de dosage libre — ne changent pas la nature de l'aliment
+  // ex: "Sel et poivre au goût" → "Sel et poivre"
+  txt = txt.replace(/\bau gout\b/g,  ' ');
+  txt = txt.replace(/\bto taste\b/g, ' ');
 
 
   return txt.replace(/\s+/g, ' ').trim();
@@ -356,10 +425,16 @@ function calculerCompatibilite(recette, myproducts = []) {
     .filter(Boolean);
 
   // Exclut les mots qui ne sont jamais des aliments (pures unités de mesure)
+  // et ajoute, pour les produits avec appellation ("Œufs bio"), une variante
+  // sans le mot d'appellation ("œufs") pour matcher "3 œufs" dans la recette.
   const produitsNormalises = myproducts
     .map(p => normaliser(p.name))
     .filter(Boolean)
-    .filter(p => !MOTS_MESURE_SEULS.has(p));
+    .filter(p => !MOTS_MESURE_SEULS.has(p))
+    .flatMap(p => {
+      const stripped = stripAppellation(p);
+      return stripped !== p ? [p, stripped] : [p];
+    });
 
   const detailsIngredients = ingredients.map(ingredient => {
     const normIngredient = supprimerMesures(normaliser(ingredient));

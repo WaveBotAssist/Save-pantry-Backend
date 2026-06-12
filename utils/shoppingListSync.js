@@ -1,4 +1,4 @@
-// socketSync.js - VERSION OPTIMISÉE
+// shoppingListSync.js - VERSION OPTIMISÉE
 const ShoppingList = require('../models/shoppinglists');
 
 module.exports.emitItemUpdated = async (io, listId, itemId, checked) => {

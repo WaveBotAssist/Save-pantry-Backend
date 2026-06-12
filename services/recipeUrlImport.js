@@ -162,24 +162,90 @@ const GENERIC_CATEGORIES = ['dinner','lunch','supper','meal','dish','recipe','fo
 // Mots-clés dans le titre/ingrédients → catégorie canonique
 // Ordre important : du plus spécifique au plus général
 const KEYWORD_RULES = [
+
   // Plats identifiables par leur contenu
-  { cat: 'Soupe',          re: /soupe|potage|veloute|bouillon|bisque|soup|ramen|pho|gaspacho|gazpacho|minestrone|chowder|bouillabaisse|goulash|veloute/ },
-  { cat: 'Salade',         re: /\bsalade\b|\bsalad\b/ },
-  { cat: 'Pates',          re: /\bpates?\b|pasta|spaghetti|tagliatelle|gnocchi|ravioli|lasagne|penne|rigatoni|fettuccine|linguine|nouille|noodle|macaroni|carbonara|bolognese/ },
-  { cat: 'Riz',            re: /risotto|paella|\briz\b|\brice\b|pilaf|fried\s*rice/ },
-  { cat: 'Dessert',        re: /gateau|cake|dessert|brownie|cookie|biscuit|muffin|cupcake|tiramisu|cheesecake|mousse|pudding|glace|sorbet|macaron|eclair|crepe\s*sucre|tarte\s*(sucre|tatin|aux|pomme|citron|fraise|framboise|chocolat)|fondant|clafoutis|flan|creme\s*brulee|financier|moelleux|profiterole|choux|meringue|bavarois|panna\s*cotta|crumble|cobbler|torte|strudel|pie\s*(aux|sucr|\bapple|\bcherry|\blemon)|apple\s*pie|lemon\s*pie|trifle|halva|baklava|compote/ },
-  { cat: 'Boisson',        re: /smoothie|cocktail|limonade|lemonade|milkshake|sirop|infusion|\bjus\s+de\b|jus\s+d'|juice|sangria|punch|mocktail/ },
-  // Moment de la journée ou occasion
-  { cat: 'Petit-déjeuner', re: /petit[\s-]dejeuner|breakfast|pancake|waffle|granola|oatmeal|porridge|pain\s*perdu|french\s*toast|muesli|scone|tartine|croissant|brioche|pain\s*au\s*chocolat|kouign|bostock/ },
-  { cat: 'Brunch',         re: /brunch|eggs?\s*benedict|avocado\s*toast|shakshuka/ },
-  { cat: 'Apéritif',       re: /aperitif|apero|tapas|amuse[\s-]?bouche|canapé|canape|finger\s*food|dip\b|tzatziki|guacamole|houmous|hummus/ },
-  { cat: 'Collation',      re: /collation|gouter|energy\s*ball|protein\s*bar|barre\s*cereal|muesli\s*bar/ },
-  { cat: 'Déjeuner',       re: /\bdejeuner\b|\blunch\b/ },
-  { cat: 'Dîner',          re: /\bdiner\b|\bdinner\b|\bsupper\b/ },
+  {
+    cat: 'Soupe',
+    re: /soupe|potage|veloute|bouillon|bisque|gaspacho|gazpacho|minestrone|bouillabaisse|goulash|ramen|pho|chowder|consomme|broth|soup/i
+  },
+
+  {
+    cat: 'Sauce',
+    re: /^(?!.*(?:soupe|potage|veloute|bouillon|bisque|gaspacho|gazpacho|minestrone|ramen|pho|chowder|broth|soup)).*(?:sauce|vinaigrette|mayonnaise|ketchup|moutarde|mustard|pesto|aioli|ailloli|bearnaise|béarnaise|hollandaise|bechamel|béchamel|espagnole|veloute|tomate|tomato\s*sauce|napolitaine|marinara|arrabiata|arrabbiata|bolognaise|bolognese|carbonara|alfredo|barbecue|bbq|teriyaki|soja|soy\s*sauce|nuoc[\s-]?mam|satay|gravy|jus\s*de\s*viande|reduction|coulis|salsa|guacamole|tzatziki|houmous|hummus|dip\b|chutney|relish|ragu|romesco|chimichurri|tapenade|pico\s*de\s*gallo|buffalo\s*sauce|sweet\s*chili|sriracha|harissa|tabasco|ponzu|hoisin|yakitori|worcestershire|cocktail\s*sauce|sauce\s*au\s*poivre|poivre\s*vert|forestiere|roquefort|fromagere|champignon|mornay|vierge|persillade|aigre[\s-]?douce|sweet\s*and\s*sour|cranberry\s*sauce|apple\s*sauce|mint\s*sauce|gribiche|ravigote|remoulade).*$/i
+  },
+
+  {
+    cat: 'Salade',
+    re: /\bsalade\b|\bsalad\b/
+  },
+
+  {
+    cat: 'Pates',
+    re: /\bpates?\b|pasta|spaghetti|tagliatelle|gnocchi|ravioli|lasagne|penne|rigatoni|fettuccine|linguine|nouille|noodle|macaroni|carbonara|bolognese/
+  },
+
+  {
+    cat: 'Riz',
+    re: /risotto|paella|\briz\b|\brice\b|pilaf|fried\s*rice/
+  },
+
+  {
+    cat: 'Dessert',
+    re: /gateau|cake|dessert|brownie|cookie|biscuit|muffin|cupcake|tiramisu|cheesecake|mousse|pudding|glace|sorbet|macaron|eclair|crepe\s*sucre|tarte\s*(sucre|tatin|aux|pomme|citron|fraise|framboise|chocolat)|fondant|clafoutis|flan|creme\s*brulee|financier|moelleux|profiterole|choux|meringue|bavarois|panna\s*cotta|crumble|cobbler|torte|strudel|pie\s*(aux|sucr|\bapple|\bcherry|\blemon)|apple\s*pie|lemon\s*pie|trifle|halva|baklava|compote/
+  },
+
+  {
+    cat: 'Boisson',
+    re: /smoothie|cocktail|limonade|lemonade|milkshake|sirop|infusion|\bjus\s+de\b|jus\s+d'|juice|sangria|punch|mocktail/
+  },
+
+  // Moment de la journée
+  {
+    cat: 'Petit-déjeuner',
+    re: /petit[\s-]dejeuner|breakfast|pancake|waffle|granola|oatmeal|porridge|pain\s*perdu|french\s*toast|muesli|scone|tartine|croissant|brioche|pain\s*au\s*chocolat|kouign|bostock/
+  },
+
+  {
+    cat: 'Brunch',
+    re: /brunch|eggs?\s*benedict|avocado\s*toast|shakshuka/
+  },
+
+  {
+    cat: 'Apéritif',
+    re: /aperitif|apero|tapas|amuse[\s-]?bouche|canapé|canape|finger\s*food|dip\b|tzatziki|guacamole|houmous|hummus/
+  },
+
+  {
+    cat: 'Collation',
+    re: /collation|gouter|energy\s*ball|protein\s*bar|barre\s*cereal|muesli\s*bar/
+  },
+
+  {
+    cat: 'Déjeuner',
+    re: /\bdejeuner\b|\blunch\b/
+  },
+
+  {
+    cat: 'Dîner',
+    re: /\bdiner\b|\bdinner\b|\bsupper\b/
+  },
+
   // Type de plat
-  { cat: 'Entrée',         re: /\bentree\b|bruschetta|carpaccio|tartare|verrines|terrine|rillettes|foie\s*gras|escargot|ceviche|blinis/ },
-  { cat: 'Viande',         re: /\bsteak\b|boeuf\s*bourguignon|coq\s*au\s*vin|poulet\s*roti|roti\s*de|pot[\s-]au[\s-]feu|blanquette|gigot|carre\s*d.agneau|grille|grill|bbq|barbeque|barbecue|escalope|magret|canard\s*roti|lapin\s*a|veau|agneau\s*roti|tenderloin|roast\b|brisket|\bribs\b|pork\s*chop|chicken\s*breast|osso\s*buco|saltimbocca|dinde\s*roti|turkey\s*roast|côte\s*de|cotoletta/ },
-  { cat: 'Plat principal',  re: /gratin|quiche|tarte\s*sal|pizza|burger|tourte|clafoutis\s*sale|casserole|tajine|tagine|curry|wok|poele|fricassee|daube|ragoût|ragout|stew|ratatouille|cassoulet|omelette|frittata|croque[\s-]|hachis\s*parmentier|shepherd.s\s*pie|moussaka|lasagne|enchilada|burrito|wrap\b|pad\s*thai|chili\b|fish\s*and\s*chips|fried\s*chicken|stir[\s-]fry|pot\s*pie|farci|farcie|stuffed/ },
+  {
+    cat: 'Entrée',
+    re: /\bentree\b|bruschetta|carpaccio|tartare|verrines|terrine|rillettes|foie\s*gras|escargot|ceviche|blinis/
+  },
+
+  {
+    cat: 'Viande',
+    re: /\bsteak\b|boeuf\s*bourguignon|coq\s*au\s*vin|poulet\s*roti|roti\s*de|pot[\s-]au[\s-]feu|blanquette|gigot|carre\s*d.agneau|grille|grill|bbq|barbeque|barbecue|escalope|magret|canard\s*roti|lapin\s*a|veau|agneau\s*roti|tenderloin|roast\b|brisket|\bribs\b|pork\s*chop|chicken\s*breast|osso\s*buco|saltimbocca|dinde\s*roti|turkey\s*roast|côte\s*de|cotoletta/
+  },
+
+  {
+    cat: 'Plat principal',
+    re: /gratin|quiche|tarte\s*sal|pizza|burger|tourte|clafoutis\s*sale|casserole|tajine|tagine|curry|wok|poele|fricassee|daube|ragoût|ragout|stew|ratatouille|cassoulet|omelette|frittata|croque[\s-]|hachis\s*parmentier|shepherd.s\s*pie|moussaka|lasagne|enchilada|burrito|wrap\b|pad\s*thai|chili\b|fish\s*and\s*chips|fried\s*chicken|stir[\s-]fry|pot\s*pie|farci|farcie|stuffed/
+  }
+
 ];
 
 /**

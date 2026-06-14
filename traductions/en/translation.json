@@ -10,5 +10,13 @@
     "Headsup": "Stock Alert",
     "expired_reminder": "⚠️ You still have {{count}} expired items in your stock.",
     "insufficientStock": "Not enough stock for the added quantities",
-    "listSyncedOnDevices": "List synced across your devices"
+    "listSyncedOnDevices": "List synced across your devices",
+    "importUrlMissing": "Missing URL.",
+    "importUrlInvalid": "Invalid URL.",
+    "importVideoNoText": "Couldn't retrieve the description or subtitles for this video.",
+    "importVideoNoRecipe": "No recipe detected in this video.",
+    "importUrlNoRecipe": "No structured recipe detected on this page. The site must use the Schema.org/Recipe format.",
+    "importUrlTimeout": "The page took too long to respond. Try a different URL.",
+    "importUrlUnreachable": "Couldn't access this page. Check the URL or try a different one.",
+    "importUrlGenericError": "Import error. Try again in a few seconds."
 }

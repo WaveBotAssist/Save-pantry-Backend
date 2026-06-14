@@ -517,4 +517,11 @@ async function extractRecipeFromUrl(url) {
   return extractRecipeFromHtml(html);
 }
 
-module.exports = { extractRecipeFromUrl, extractRecipeFromHtml };
+module.exports = {
+  extractRecipeFromUrl,
+  extractRecipeFromHtml,
+  // Réutilisés par videoRecipeImport.js (YouTube/Instagram/TikTok)
+  BASE_HEADERS,
+  decodeEntities,
+  fetchFollowingRedirects,
+};

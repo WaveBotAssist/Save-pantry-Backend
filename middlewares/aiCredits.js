@@ -15,6 +15,10 @@
  *   - Premium                            : bypass total, aucune vérification
  *
  * Header requis : X-Device-ID (UUID généré par l'app, stocké dans AsyncStorage)
+ *
+ * checkAiQuota(req) — même logique, sans toucher req/res/next. Utilisé quand
+ * une route ne consomme un crédit que sur CERTAINS chemins (ex: import URL,
+ * IA seulement pour les vidéos sans JSON-LD).
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -26,16 +30,24 @@ const { checkPremiumStatus } = require('./checkPremium');
 const FREE_MONTHLY_LIMIT = 10; // crédits/mois pour un compte gratuit
 const ANON_LIMIT         = 5;  // crédits permanents pour un utilisateur anonyme
 
-module.exports = async function aiCreditsMiddleware(req, res, next) {
+/**
+ * Vérifie le quota IA et prépare la consommation du crédit.
+ *
+ * @returns {Promise<object>}
+ *   - { ok: true,  consumeCredit: () => Promise } — crédit dispo (no-op si premium)
+ *   - { ok: false, status: 400, body: {...} }     — X-Device-ID manquant (anonyme)
+ *   - { ok: false, status: 429, body: {...} }     — quota épuisé
+ */
+async function checkAiQuota(req) {
   try {
     const deviceId = req.headers['x-device-id'] ?? null;
 
     // ── Cas 1 : Utilisateur Premium ──────────────────────────────────────────
     // On vérifie le statut premium (avec double-check RevenueCat si nécessaire).
-    // Si premium → on laisse passer sans toucher aux crédits.
+    // Si premium → bypass total, aucune consommation de crédit.
     if (req.user) {
       const isPremium = await checkPremiumStatus(req.user);
-      if (isPremium) return next();
+      if (isPremium) return { ok: true, consumeCredit: () => {} };
     }
 
     // ── Cas 2 : Utilisateur anonyme ──────────────────────────────────────────
@@ -43,10 +55,7 @@ module.exports = async function aiCreditsMiddleware(req, res, next) {
     // Limite permanente : jamais de reset mensuel.
     if (!req.user) {
       if (!deviceId) {
-        return res.status(400).json({
-          result: false,
-          error:  'quota_missing_device_id',
-        });
+        return { ok: false, status: 400, body: { result: false, error: 'quota_missing_device_id' } };
       }
 
       // Cherche ou crée le document quota pour cet appareil.
@@ -59,16 +68,11 @@ module.exports = async function aiCreditsMiddleware(req, res, next) {
       );
 
       if (quota.scanCount >= ANON_LIMIT) {
-        return res.status(429).json({
-          result:    false,
-          error:     'quota_exceeded',
-          remaining: 0,
-        });
+        return { ok: false, status: 429, body: { result: false, error: 'quota_exceeded', remaining: 0 } };
       }
 
-      // La route appellera req.consumeCredit() uniquement si elle réussit
-      req.consumeCredit = () => ScannerQuota.updateOne({ _id: quota._id }, { $inc: { scanCount: 1 } });
-      return next();
+      // La route appellera consumeCredit() uniquement si elle réussit
+      return { ok: true, consumeCredit: () => ScannerQuota.updateOne({ _id: quota._id }, { $inc: { scanCount: 1 } }) };
     }
 
     // ── Cas 3 : Utilisateur connecté gratuit ─────────────────────────────────
@@ -101,21 +105,30 @@ module.exports = async function aiCreditsMiddleware(req, res, next) {
     }
 
     if (quota.scanCount >= FREE_MONTHLY_LIMIT) {
-      return res.status(429).json({
-        result:    false,
-        error:     'quota_exceeded',
-        remaining: 0,
-      });
+      return { ok: false, status: 429, body: { result: false, error: 'quota_exceeded', remaining: 0 } };
     }
 
-    // La route appellera req.consumeCredit() uniquement si elle réussit
-    req.consumeCredit = () => ScannerQuota.updateOne({ _id: quota._id }, { $inc: { scanCount: 1 } });
-    next();
+    // La route appellera consumeCredit() uniquement si elle réussit
+    return { ok: true, consumeCredit: () => ScannerQuota.updateOne({ _id: quota._id }, { $inc: { scanCount: 1 } }) };
 
   } catch (err) {
-    console.error('❌ [aiCreditsMiddleware]', err.message);
+    console.error('❌ [checkAiQuota]', err.message);
     // En cas d'erreur technique (MongoDB down, etc.), on laisse passer
     // pour ne pas bloquer l'utilisateur à cause d'un problème infra.
-    next();
+    return { ok: true, consumeCredit: () => {} };
   }
-};
+}
+
+/**
+ * Middleware Express — applique checkAiQuota() et expose req.consumeCredit().
+ */
+async function aiCreditsMiddleware(req, res, next) {
+  const result = await checkAiQuota(req);
+  if (!result.ok) return res.status(result.status).json(result.body);
+
+  req.consumeCredit = result.consumeCredit;
+  next();
+}
+
+module.exports = aiCreditsMiddleware;
+module.exports.checkAiQuota = checkAiQuota;

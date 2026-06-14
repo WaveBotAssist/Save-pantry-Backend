@@ -159,6 +159,14 @@ const QUALIFICATIFS_SIMPLES = new Set([
   'grille', 'grillee', 'grilles', 'grillees',
   'epluchee', 'epluche', 'epluches', 'epluchees',
   'tamise', 'tamisee',
+  'tranche', 'tranchee', 'tranches', 'tranchees',
+  'surgele', 'surgelee', 'surgeles', 'surgelees',
+  'congele', 'congelee', 'congeles', 'congelees',
+  'decongele', 'decongelee', 'decongeles', 'decongelees',
+  'emiette', 'emiettee', 'emiettes', 'emiettees',
+  'effiloche', 'effilochee', 'effiloches', 'effilochees',
+  'cisele', 'ciselee', 'ciseles', 'ciselees',
+  'sechee', 'seches', 'sechees',
   // Origine / élevage / qualité (FR) — "oeufs au sol", "poulet bio", "oeufs fermiers"
   'sol', 'bio', 'fermier', 'fermiere', 'fermiers', 'fermieres', 'plein', 'label',
   // EN
@@ -167,6 +175,7 @@ const QUALIFICATIFS_SIMPLES = new Set([
   'melted', 'beaten', 'grated', 'chopped', 'minced', 'sliced',
   'crushed', 'mashed', 'cooked', 'grilled', 'peeled', 'sifted',
   'organic', 'free', 'range', 'farm',
+  'frozen', 'thawed', 'shredded', 'crumbled',
 ]);
 
 // ─── Appellations produit ───────────────────────────────────────────────────

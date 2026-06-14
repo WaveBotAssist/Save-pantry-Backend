@@ -5,6 +5,7 @@ const checkRole = require('../middlewares/checkRole');
 const User = require('../models/users');
 const Recipes = require('../models/recipe');
 const UserRecipe = require('../models/userRecipe');
+const Planning = require('../models/planning');
 const { uploadToR2, deleteFromR2 } = require('../services/R2cloudflare');
 const { calculerCompatibilite } = require('../services/compatibilityService');
 const multer = require('multer');
@@ -515,8 +516,38 @@ router.delete('/personal/:id', async (req, res) => {
       }
     }
 
+    // Retire aussi cette recette des repas déjà planifiés (snapshots
+    // recipeId/title/image dans Planning) — sinon elle reste affichée
+    // dans le planning malgré sa suppression.
+    const planning = await Planning.findOne({ userId: req.user._id });
+    const updatedWeekStarts = [];
+    if (planning) {
+      for (const week of planning.weeks) {
+        let weekChanged = false;
+        if (typeof week.days.set !== 'function') {
+          week.days = new Map(Object.entries(week.days || {}));
+        }
+        for (const [dayKey, dayData] of week.days) {
+          const before = dayData.recipes?.length ?? 0;
+          dayData.recipes = (dayData.recipes || []).filter(r => String(r.recipeId) !== String(recipe._id));
+          if (dayData.recipes.length !== before) {
+            week.days.set(dayKey, dayData);
+            weekChanged = true;
+          }
+        }
+        if (weekChanged) updatedWeekStarts.push(week.weekStart);
+      }
+      if (updatedWeekStarts.length > 0) {
+        planning.markModified('weeks');
+        await planning.save();
+      }
+    }
+
     const io = req.app.get('io');
     io.to(`user-${req.user._id}`).emit('recipes-updated');
+    for (const weekStart of updatedWeekStarts) {
+      io.to(`planning-${req.user._id}`).emit('planning-updated', { weekStart });
+    }
     res.json({ result: true, message: 'Recette supprimée.' });
   } catch (err) {
     res.status(500).json({ result: false, error: err.message });
@@ -576,7 +607,7 @@ router.post('/generate', aiCredits, async (req, res) => {
    body: { image: string (base64), mimeType: string }
    Accessible aux utilisateurs connectés uniquement.
 ───────────────────────────────────────────────────────────────────────────── */
-const { extractRecipeFromImage, generateRecipeFromStock } = require('../services/recipeAI');
+const { extractRecipeFromImage, extractRecipeFromVideoText, generateRecipeFromStock } = require('../services/recipeAI');
 
 router.post('/scan', aiCredits, async (req, res) => {
   try {
@@ -610,19 +641,46 @@ router.post('/scan', aiCredits, async (req, res) => {
    Accessible à tous (optionalAuth).
 ───────────────────────────────────────────────────────────────────────────── */
 const { extractRecipeFromUrl, extractRecipeFromHtml } = require('../services/recipeUrlImport');
+const { detectVideoPlatform, getVideoRecipeSource } = require('../services/videoRecipeImport');
+const { checkAiQuota } = require('../middlewares/aiCredits');
 
 router.post('/import-url', async (req, res) => {
   try {
     const { url, html } = req.body;
 
     if (!url || typeof url !== 'string') {
-      return res.status(400).json({ result: false, error: 'URL manquante.' });
+      return res.status(400).json({ result: false, error: req.t('importUrlMissing') });
     }
 
     try {
       new URL(url);
     } catch {
-      return res.status(400).json({ result: false, error: 'URL invalide.' });
+      return res.status(400).json({ result: false, error: req.t('importUrlInvalid') });
+    }
+
+    // Vidéo YouTube / Instagram / TikTok → extraction IA depuis le texte
+    // (description + sous-titres, ou légende), consomme un crédit IA.
+    const platform = detectVideoPlatform(url);
+    if (platform) {
+      const source = await getVideoRecipeSource(url, platform);
+      if (!source?.text) {
+        return res.status(422).json({
+          result: false,
+          error: req.t('importVideoNoText'),
+        });
+      }
+
+      const quota = await checkAiQuota(req);
+      if (!quota.ok) return res.status(quota.status).json(quota.body);
+
+      const recipe = await extractRecipeFromVideoText(source.text, platform);
+      if (!recipe?.titre || recipe.confidence < 0.5 || !recipe.ingredients?.length) {
+        return res.status(422).json({ result: false, error: req.t('importVideoNoRecipe') });
+      }
+      if (!recipe.image && source.image) recipe.image = source.image;
+
+      await quota.consumeCredit();
+      return res.json({ result: true, recipe, creditConsumed: true });
     }
 
     // html fourni par le frontend (fetch depuis l'appareil) → pas de fetch serveur
@@ -630,11 +688,11 @@ router.post('/import-url', async (req, res) => {
     const recipe = html
       ? extractRecipeFromHtml(html)
       : await extractRecipeFromUrl(url);
-   
+
     if (!recipe) {
       return res.status(422).json({
         result: false,
-        error: "Aucune recette structurée détectée sur cette page. Le site doit utiliser le format Schema.org/Recipe.",
+        error: req.t('importUrlNoRecipe'),
       });
     }
 
@@ -647,7 +705,7 @@ router.post('/import-url', async (req, res) => {
     if (err.name === 'AbortError') {
       return res.status(422).json({
         result: false,
-        error: "La page a mis trop de temps à répondre. Essaie avec une autre URL.",
+        error: req.t('importUrlTimeout'),
       });
     }
 
@@ -662,11 +720,11 @@ router.post('/import-url', async (req, res) => {
     ) {
       return res.status(422).json({
         result: false,
-        error: "Impossible d'accéder à cette page. Vérifie l'URL ou essaie avec une autre.",
+        error: req.t('importUrlUnreachable'),
       });
     }
 
-    res.status(500).json({ result: false, error: "Erreur lors de l'import. Réessaie dans quelques secondes." });
+    res.status(500).json({ result: false, error: req.t('importUrlGenericError') });
   }
 });
 
@@ -726,7 +784,7 @@ router.post('/share', shareLimiter, async (req, res) => {
     // NODE_ENV = "production" est défini automatiquement par l'hébergeur (Railway, Render...)
     const base = process.env.NODE_ENV === 'production'
       ? 'https://savepantry.org'
-      : 'http://192.168.1.56:3000';
+      :  process.env.MY_IP;
     res.json({ result: true, shareUrl: `${base}/s/${entry.code}` });
 
   } catch (err) {

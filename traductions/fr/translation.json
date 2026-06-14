@@ -10,5 +10,13 @@
     "Headsup": "Alerte stock",
     "expired_reminder": "⚠️ Vous avez encore {{count}} produits périmés dans votre stock.",
     "insufficientStock": "Pas assez en stock pour les quantités ajoutées",
-    "listSyncedOnDevices": "Liste synchronisée sur vos appareils"
+    "listSyncedOnDevices": "Liste synchronisée sur vos appareils",
+    "importUrlMissing": "URL manquante.",
+    "importUrlInvalid": "URL invalide.",
+    "importVideoNoText": "Impossible de récupérer la description ou les sous-titres de cette vidéo.",
+    "importVideoNoRecipe": "Aucune recette détectée dans cette vidéo.",
+    "importUrlNoRecipe": "Aucune recette structurée détectée sur cette page. Le site doit utiliser le format Schema.org/Recipe.",
+    "importUrlTimeout": "La page a mis trop de temps à répondre. Essaie avec une autre URL.",
+    "importUrlUnreachable": "Impossible d'accéder à cette page. Vérifie l'URL ou essaie avec une autre.",
+    "importUrlGenericError": "Erreur lors de l'import. Réessaie dans quelques secondes."
 }

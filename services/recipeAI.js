@@ -33,13 +33,82 @@ Règles :
 - titre : nom principal de la recette
 - ingredients : TOUS les ingrédients avec quantité et unité. Si la liste n'est pas visible mais que les instructions les mentionnent, déduis-les depuis le texte des étapes. Ne laisse jamais ce tableau vide si la recette est identifiable.
 - instructions : étapes dans l'ordre, une étape par élément
-- temps_preparation : durée totale en minutes (null si non indiqué)
-- portion : nombre de personnes (null si non indiqué)
+- temps_preparation : durée totale en minutes, UN SEUL NOMBRE ENTIER, jamais de texte ni de fourchette (null si non indiqué). Ex: "30-40 minutes" → 35
+- portion : nombre de personnes, UN SEUL NOMBRE ENTIER, jamais de texte ni de fourchette (null si non indiqué). Ex: "5 à 6 personnes" → 5
 - categorie : une seule valeur parmi — Petit-déjeuner, Brunch, Entrée, Plat principal, Viande, Pates, Riz, Salade, Soupe, Dessert, Collation, Apéritif, Déjeuner, Dîner, Boisson, Autre
 - confidence : 0 (image illisible) → 1 (parfaitement lisible)
 - Si pas de recette : { "titre": "", "ingredients": [], "instructions": [], "confidence": 0 }`,
     config: { temperature: 0.1 },
   });
+}
+
+
+// ─── Extraction depuis le texte d'une vidéo (description + sous-titres) ──────
+
+/**
+ * Transforme le texte écrit par le créateur d'une vidéo (description
+ * YouTube + sous-titres, ou légende Instagram/TikTok) en recette structurée.
+ *
+ * @param {string} text     - Description et/ou sous-titres de la vidéo
+ * @param {string} platform - 'youtube' | 'instagram' | 'tiktok' (pour le contexte du prompt)
+ */
+async function extractRecipeFromVideoText(text, platform) {
+  const recipe = await callGemini({
+    model: GEMINI_MODELS.flashLite,
+    prompt: `Voici le texte associé à une vidéo de recette de cuisine (${platform}) :
+la description du créateur et/ou la transcription des sous-titres (les deux
+séparés par une ligne vide si disponibles). Ce texte peut contenir des
+éléments hors-sujet (hashtags, emojis, appels à s'abonner/liker, liens,
+mentions de sponsors, hésitations à l'oral comme "euh", "voilà") à ignorer.
+
+TEXTE :
+"""
+${text}
+"""
+
+Analyse ce texte et extrais la recette de cuisine qu'il décrit. JSON uniquement, aucun texte avant ou après.
+
+Format attendu :
+{
+  "titre": "Nom de la recette",
+  "ingredients": [
+    { "name": "Farine", "quantity": "200", "unit": "g" }
+  ],
+  "instructions": ["Étape 1 détaillée...", "Étape 2..."],
+  "temps_preparation": 30,
+  "portion": 4,
+  "categorie": "Plat principal",
+  "confidence": 0.9
+}
+
+Règles :
+- titre : nom de la recette préparée dans la vidéo
+- ingredients : TOUS les ingrédients mentionnés, avec quantité et unité séparées. Si une quantité n'est pas précisée, laisse "quantity" et "unit" vides ("").
+- instructions : étapes de préparation dans l'ordre, reformulées de façon claire et concise (pas de transcription mot à mot des hésitations orales)
+- temps_preparation : durée totale en minutes, UN SEUL NOMBRE ENTIER, jamais de texte ni de fourchette (null si non indiqué). Ex: "30-40 minutes" → 35
+- portion : nombre de personnes, UN SEUL NOMBRE ENTIER, jamais de texte ni de fourchette (null si non indiqué). Ex: "5 à 6 personnes" → 5
+- categorie : une seule valeur parmi — Petit-déjeuner, Brunch, Entrée, Plat principal, Viande, Pates, Riz, Salade, Soupe, Dessert, Collation, Apéritif, Déjeuner, Dîner, Boisson, Autre
+- confidence : 0 (aucune recette identifiable dans ce texte) → 1 (recette complète et claire)
+- Si ce texte ne décrit aucune recette de cuisine : { "titre": "", "ingredients": [], "instructions": [], "confidence": 0 }`,
+    config: { temperature: 0.1 },
+  });
+
+  // Filet de sécurité : si Gemini renvoie malgré tout une fourchette ("5 à 6")
+  // ou du texte pour ces deux champs, on extrait le premier nombre pour éviter
+  // une erreur de validation Mongoose (UserRecipe attend un Number).
+  return {
+    ...recipe,
+    temps_preparation: toIntOrNull(recipe.temps_preparation),
+    portion: toIntOrNull(recipe.portion),
+  };
+}
+
+/** Extrait le premier nombre entier d'une valeur ("5 à 6" → 5, 30 → 30, "" → null). */
+function toIntOrNull(value) {
+  if (value == null) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? Math.round(value) : null;
+  const match = String(value).match(/\d+/);
+  return match ? parseInt(match[0], 10) : null;
 }
 
 
@@ -191,4 +260,4 @@ ${langInstruction}`,
   });
 }
 
-module.exports = { extractRecipeFromImage, generateWeeklyPlan, generateRecipeFromStock };
+module.exports = { extractRecipeFromImage, extractRecipeFromVideoText, generateWeeklyPlan, generateRecipeFromStock };

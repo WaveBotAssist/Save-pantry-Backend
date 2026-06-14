@@ -7,6 +7,8 @@ const UserRecipe = require('../models/userRecipe');
 const Planning = require('../models/planning');
 const { cleanPlanning } = require('../utils/cleanPlanning');
 const aiCredits = require('../middlewares/aiCredits');
+const { calculerCompatibilite } = require('../services/compatibilityService');
+const { getCatalogMatches } = require('../services/catalogMatching');
 
 
 /* ------------------------------------------------------------
@@ -407,20 +409,50 @@ router.post('/generate', aiCredits, async (req, res) => {
 
     const [user, rawRecipes] = await Promise.all([
       User.findById(userId)
-        .select('myproducts favorites')
-        .populate({ path: 'favorites', select: '_id titre ingredients' }),
-      UserRecipe.find({ userId }).select('_id titre ingredients'),
+        .select('myproducts favorites language')
+        .populate({ path: 'favorites', select: '_id titre ingredients image' }),
+      UserRecipe.find({ userId }).select('_id titre ingredients image'),
     ]);
 
     if (!user) {
       return res.status(404).json({ result: false, error: 'Utilisateur introuvable.' });
     }
 
-    // Fusionne recettes personnelles (créées + générées par l'IA) et favoris du
-    // catalogue — ce sont les seules recettes que l'IA peut proposer au planning
-    const recipes = [...rawRecipes, ...(user.favorites ?? [])].map(r => ({
+    const myproducts = user.myproducts ?? [];
+
+    // Recettes personnelles + favoris du catalogue, avec leur compatibilité
+    // stock (% d'ingrédients déjà présents dans le garde-manger)
+    const personalAndFavorites = [
+      ...rawRecipes.map(r => ({ _id: r._id, titre: r.titre, ingredients: r.ingredients ?? [], image: r.image ?? '' })),
+      ...(user.favorites ?? []).map(r => ({ _id: r._id, titre: r.titre, ingredients: r.ingredients ?? [], image: r.image ?? '' })),
+    ].map(r => ({
+      ...r,
+      pourcentageCompatibilite: calculerCompatibilite(r, myproducts).pourcentageCompatibilite,
+    }));
+
+    // Complète avec des recettes du catalogue : en priorité celles qui matchent
+    // le stock (% > 0, comme "Découvrir"), puis des recettes aléatoires du
+    // catalogue si besoin — garantit assez de variété même si le pool
+    // perso/favoris est trop petit (ex: 1 seule recette favorite → éviterait
+    // qu'elle se retrouve répétée sur toute la semaine).
+    // On exclut celles déjà présentes en perso/favoris (un favori est une recette
+    // du catalogue, il pourrait ressortir ici aussi).
+    const existingIds = new Set(personalAndFavorites.map(r => String(r._id)));
+    const catalogMatches = (await getCatalogMatches(myproducts, user.language, 20))
+      .filter(r => !existingIds.has(String(r._id)));
+
+    // Priorité : recettes perso/favoris qui utilisent déjà le stock (compatibilité
+    // décroissante), puis le catalogue en complément, puis le reste des recettes
+    // perso/favoris (sans correspondance avec le stock actuel)
+    const withStock = personalAndFavorites
+      .filter(r => r.pourcentageCompatibilite > 0)
+      .sort((a, b) => b.pourcentageCompatibilite - a.pourcentageCompatibilite);
+    const withoutStock = personalAndFavorites.filter(r => r.pourcentageCompatibilite === 0);
+
+    const recipes = [...withStock, ...catalogMatches, ...withoutStock].map(r => ({
       _id: r._id,
       titre: r.titre,
+      image: r.image ?? '',
       ingredients: (r.ingredients ?? []).map(ing =>
         typeof ing === 'string' ? { name: ing, quantity: '', unit: '' } : ing
       ),
@@ -433,20 +465,32 @@ router.post('/generate', aiCredits, async (req, res) => {
     const today   = new Date();
     const in3days = new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000);
 
-    const expiringProducts = (user.myproducts ?? []).filter(p =>
+    const expiringProducts = myproducts.filter(p =>
       p.expiration && new Date(p.expiration) <= in3days
     );
-    const otherProducts = (user.myproducts ?? []).filter(p =>
+    const otherProducts = myproducts.filter(p =>
       !p.expiration || new Date(p.expiration) > in3days
     );
 
-    // Prendre plus de recettes pour les plans 2 semaines
+    // Prendre plus de recettes pour les plans 2 semaines — déjà triées par
+    // pertinence stock, on garde cet ordre (plus de mélange aléatoire)
     const maxRecipes = numberOfDays > 7 ? 60 : 40;
-    const selectedRecipes = [...recipes].sort(() => Math.random() - 0.5).slice(0, maxRecipes);
+    const selectedRecipes = recipes.slice(0, maxRecipes);
 
-    console.log(`[planning/generate] ${recipes.length} recette(s) — ${expiringProducts.length} expirant(s) — ${numberOfDays} jour(s) — ${selectedRecipes.length} recette(s) → Gemini`);
+    console.log(`[planning/generate] ${recipes.length} recette(s) (${withStock.length} avec stock, ${catalogMatches.length} catalogue, ${withoutStock.length} sans stock) — ${expiringProducts.length} expirant(s) — ${numberOfDays} jour(s) — ${selectedRecipes.length} recette(s) → Gemini`);
 
     const plan = await generateWeeklyPlan(expiringProducts, otherProducts, selectedRecipes, dates);
+
+    // Garde-fou : ne garder que les repas dont le recipeId correspond bien à
+    // une recette envoyée à Gemini — élimine les inventions (ex: un produit
+    // du stock proposé comme nom de recette).
+    const recipeById = new Map(selectedRecipes.map(r => [String(r._id), r]));
+    plan.meals = (plan.meals ?? [])
+      .filter(m => recipeById.has(String(m.recipeId)))
+      // L'IA peut choisir une recette perso, favorite ou catalogue — on
+      // attache son image ici pour que le front n'ait pas à la rechercher
+      // dans plusieurs caches (recettes / favoris / catalogue)
+      .map(m => ({ ...m, image: recipeById.get(String(m.recipeId)).image || null }));
 
     await req.consumeCredit?.();
     res.json({ result: true, plan });

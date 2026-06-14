@@ -173,8 +173,8 @@ RÈGLE PRIORITAIRE (anti-gaspillage) :
 1. Choisis UNIQUEMENT parmi les recettes de la liste ci-dessus — n'invente jamais de plat, recipeId doit toujours être un ID exact de cette liste.
 2. Commence par les produits expirants. Pour chaque jour, cherche d'abord la recette de la liste qui en utilise le maximum.
 3. Si aucune recette de la liste ne contient les produits expirants, choisis quand même une recette EXISTANTE de la liste pour ce jour.
-4. Chaque recette ne doit apparaître qu'UNE SEULE FOIS dans tout le planning — ne propose jamais deux fois le même recipeId, même à des dates différentes.
-5. Exception : si le nombre de jours dépasse le nombre de recettes disponibles, répète uniquement en dernier recours, et espace les répétitions le plus possible (jamais deux jours qui se suivent).
+4. Chaque recette ne doit apparaître qu'UNE SEULE FOIS dans tout le planning — ne propose jamais deux fois le même recipeId, même à des dates différentes.      
+5. Exception : si le nombre de jours dépasse le nombre de recettes disponibles, répète uniquement en dernier recours, et espace les répétitions le plus possible jamais deux jours qui se suivent).    
 6. Si la liste est vide, laisse "meals" vide — ne propose rien.
 
 JSON uniquement :

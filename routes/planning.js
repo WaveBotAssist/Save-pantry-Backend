@@ -332,10 +332,11 @@ router.post('/bulk-meals', async (req, res) => {
     planning.markModified('weeks');
     await planning.save();
 
+    // Un seul event pour toutes les semaines traitées — le frontend
+    // (usePlanningRealtime) invalide ["planning-full"] sans regarder le
+    // contenu de l'event, pas besoin d'un emit par semaine.
     const io = req.app.get('io');
-    for (const weekStart of Object.keys(weekGroups)) {
-      io.to(`planning-${userId}`).emit('planning-updated', { weekStart });
-    }
+    io.to(`planning-${userId}`).emit('planning-updated');
 
     res.json({ result: true });
   } catch (e) {
@@ -441,15 +442,77 @@ router.post('/generate', aiCredits, async (req, res) => {
     const catalogMatches = (await getCatalogMatches(myproducts, user.language, 20))
       .filter(r => !existingIds.has(String(r._id)));
 
-    // Priorité : recettes perso/favoris qui utilisent déjà le stock (compatibilité
-    // décroissante), puis le catalogue en complément, puis le reste des recettes
-    // perso/favoris (sans correspondance avec le stock actuel)
+    // Produits expirant dans ≤ 3 jours — anti-gaspillage : ces recettes
+    // passent en tête du niveau "avec stock" (cf. tri ci-dessous), et la
+    // liste est aussi transmise à Gemini (règle 2 du prompt) pour le
+    // placement sur le calendrier final.
+    const today   = new Date();
+    const in3days = new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const expiringProducts = myproducts.filter(p =>
+      p.expiration && new Date(p.expiration) <= in3days
+    );
+    const otherProducts = myproducts.filter(p =>
+      !p.expiration || new Date(p.expiration) > in3days
+    );
+    // Urgence d'une recette : timestamp d'expiration le plus proche parmi les
+    // produits expirants qu'elle utilise (Infinity si aucun). Une date déjà
+    // passée (produit périmé) donne un timestamp plus petit qu'une date dans
+    // 3 jours → encore plus urgent, donc encore plus prioritaire.
+    // Accepte aussi bien les ingrédients bruts (chaînes, depuis
+    // personalAndFavorites/catalogMatches) que normalisés en objets
+    // {name, quantity, unit} (depuis selectedRecipes) — calculerCompatibilite
+    // attend des chaînes.
+    const expirationUrgency = new Map();
+    [...personalAndFavorites, ...catalogMatches].forEach(r => {
+      const ingredients = (r.ingredients ?? []).map(ing => (typeof ing === 'string' ? ing : ing.name));
+      const dates = expiringProducts
+        .filter(p => calculerCompatibilite({ ingredients }, [p]).pourcentageCompatibilite > 0)
+        .map(p => new Date(p.expiration).getTime());
+      expirationUrgency.set(String(r._id), dates.length > 0 ? Math.min(...dates) : Infinity);
+    });
+    const urgency = (r) => expirationUrgency.get(String(r._id)) ?? Infinity;
+    // Compare deux recettes par urgence : la plus urgente (timestamp le plus
+    // petit, donc périmée depuis le plus longtemps) passe en premier ; celles
+    // sans produit expirant (Infinity) passent en dernier. À urgence égale
+    // (même produit expirant utilisé par une recette perso/favoris ET une
+    // recette catalogue), la recette perso/favoris passe devant.
+    const compareUrgency = (a, b) => {
+      const ua = urgency(a), ub = urgency(b);
+      if (ua !== ub) {
+        if (ua === Infinity) return 1;
+        if (ub === Infinity) return -1;
+        return ua - ub;
+      }
+      const aPerso = existingIds.has(String(a._id));
+      const bPerso = existingIds.has(String(b._id));
+      if (aPerso !== bPerso) return aPerso ? -1 : 1;
+      return 0;
+    };
+
+    // Priorité (4 niveaux) : perso/favoris avec stock > catalogue avec stock
+    // > perso/favoris sans stock > catalogue sans stock. catalogMatches mélange
+    // déjà "avec stock" (triés) et "sans stock" (aléatoire, pour la variété) —
+    // on les sépare pour les replacer aux niveaux 2 et 4.
     const withStock = personalAndFavorites
       .filter(r => r.pourcentageCompatibilite > 0)
-      .sort((a, b) => b.pourcentageCompatibilite - a.pourcentageCompatibilite);
+      .sort((a, b) =>
+        compareUrgency(a, b)
+        || b.pourcentageCompatibilite - a.pourcentageCompatibilite
+      );
     const withoutStock = personalAndFavorites.filter(r => r.pourcentageCompatibilite === 0);
 
-    const recipes = [...withStock, ...catalogMatches, ...withoutStock].map(r => ({
+    // Même logique que withStock : si un produit expirant n'est utilisé par
+    // aucune recette perso/favoris, on s'assure qu'au moins une recette du
+    // catalogue qui l'utilise passe en tête du niveau 2.
+    const catalogWithStock = catalogMatches
+      .filter(r => r.pourcentageCompatibilite > 0)
+      .sort((a, b) =>
+        compareUrgency(a, b)
+        || b.pourcentageCompatibilite - a.pourcentageCompatibilite
+      );
+    const catalogWithoutStock = catalogMatches.filter(r => r.pourcentageCompatibilite === 0);
+
+    const recipes = [...withStock, ...catalogWithStock, ...withoutStock, ...catalogWithoutStock].map(r => ({
       _id: r._id,
       titre: r.titre,
       image: r.image ?? '',
@@ -462,22 +525,12 @@ router.post('/generate', aiCredits, async (req, res) => {
       return res.status(400).json({ result: false, error: 'no_recipes' });
     }
 
-    const today   = new Date();
-    const in3days = new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000);
-
-    const expiringProducts = myproducts.filter(p =>
-      p.expiration && new Date(p.expiration) <= in3days
-    );
-    const otherProducts = myproducts.filter(p =>
-      !p.expiration || new Date(p.expiration) > in3days
-    );
-
     // Prendre plus de recettes pour les plans 2 semaines — déjà triées par
     // pertinence stock, on garde cet ordre (plus de mélange aléatoire)
     const maxRecipes = numberOfDays > 7 ? 60 : 40;
     const selectedRecipes = recipes.slice(0, maxRecipes);
 
-    console.log(`[planning/generate] ${recipes.length} recette(s) (${withStock.length} avec stock, ${catalogMatches.length} catalogue, ${withoutStock.length} sans stock) — ${expiringProducts.length} expirant(s) — ${numberOfDays} jour(s) — ${selectedRecipes.length} recette(s) → Gemini`);
+    console.log(`[planning/generate] ${recipes.length} recette(s) (${withStock.length} perso/favoris+stock, ${catalogWithStock.length} catalogue+stock, ${withoutStock.length} perso/favoris sans stock, ${catalogWithoutStock.length} catalogue sans stock) — ${expiringProducts.length} expirant(s) — ${numberOfDays} jour(s) — ${selectedRecipes.length} recette(s) → Gemini`);
 
     const plan = await generateWeeklyPlan(expiringProducts, otherProducts, selectedRecipes, dates);
 
@@ -491,6 +544,47 @@ router.post('/generate', aiCredits, async (req, res) => {
       // attache son image ici pour que le front n'ait pas à la rechercher
       // dans plusieurs caches (recettes / favoris / catalogue)
       .map(m => ({ ...m, image: recipeById.get(String(m.recipeId)).image || null }));
+
+    // Comble les jours sans repas : Gemini peut en oublier un, ou le
+    // garde-fou ci-dessus a retiré un recipeId invalide — on assigne la
+    // recette suivante la plus pertinente (déjà triée par pertinence stock),
+    // en évitant si possible les recettes déjà placées dans le planning.
+    const plannedDates = new Set(plan.meals.map(m => m.date));
+    const missingDates = dates.filter(d => !plannedDates.has(d));
+
+    if (missingDates.length > 0) {
+      const usedIds = new Set(plan.meals.map(m => String(m.recipeId)));
+      const fallbackPool = selectedRecipes.filter(r => !usedIds.has(String(r._id)));
+      const pool = fallbackPool.length > 0 ? fallbackPool : selectedRecipes;
+
+      missingDates.forEach((date, i) => {
+        const recipe = pool[i % pool.length];
+        plan.meals.push({
+          date,
+          recipeTitle: recipe.titre,
+          recipeId: recipe._id,
+          reason: '',
+          image: recipe.image || null,
+        });
+      });
+
+      plan.meals.sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    // Place les recettes anti-gaspillage (utilisant un produit ≤3j, y compris
+    // déjà périmé) sur les premiers jours du calendrier, triées par urgence —
+    // le produit périmé depuis le plus longtemps passe en premier — même
+    // plusieurs jours à la suite si besoin.
+    const expiringMeals = [];
+    const otherMeals = [];
+    plan.meals.forEach(m => {
+      const recipe = recipeById.get(String(m.recipeId));
+      (urgency(recipe) !== Infinity ? expiringMeals : otherMeals).push(m);
+    });
+    expiringMeals.sort((a, b) =>
+      compareUrgency(recipeById.get(String(a.recipeId)), recipeById.get(String(b.recipeId)))
+    );
+    plan.meals = [...expiringMeals, ...otherMeals].map((m, i) => ({ ...m, date: dates[i] ?? m.date }));
 
     await req.consumeCredit?.();
     res.json({ result: true, plan });

@@ -214,7 +214,17 @@ async function getSocialCaptionSource(url, platform) {
   const timeout = setTimeout(() => controller.abort(), 10_000);
 
   try {
-    const res = await fetchFollowingRedirects(url, controller.signal);
+    // Instagram ne sert og:description qu'au crawler Meta — le UA Chrome reçoit
+    // une SPA vide sans légende. facebookexternalhit obtient le HTML pré-rendu complet.
+    let res;
+    if (platform === 'instagram') {
+      res = await fetch(url, {
+        headers: { ...BASE_HEADERS, 'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)' },
+        signal: controller.signal,
+      });
+    } else {
+      res = await fetchFollowingRedirects(url, controller.signal);
+    }
     if (!res.ok) return null;
     const html = await res.text();
     const $ = cheerio.load(html);

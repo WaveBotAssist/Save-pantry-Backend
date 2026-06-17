@@ -215,24 +215,26 @@ function stripAppellation(normProduit) {
  * construction dynamique) pour garantir l'absence de bug d'échappement.
  *
  * Formes couvertes après normaliser() :
- *   cuillere(s) a soupe / cafe      cuil(s) a soupe / cafe
- *   cuillere(s) soupe / cafe        cuil(s) soupe / cafe   (sans "à")
+ *   cuillere(s) a soupe / cafe / table / the    cuil(s) a soupe / cafe / table / the
+ *   cuillere(s) soupe / cafe / table / the      cuil(s) soupe / cafe / table / the  (sans "à")
  *   c a s / c a c                   c s / c c              (abréviations)
  *   cas / cac / cs / cc             tablespoon(s) / teaspoon(s) / tbsp / tsp (EN)
+ *
+ * "table"/"the" sont les équivalents québécois de "soupe"/"cafe".
  */
 function supprimerMesures(txt) {
   // FR — formes longues avec "à"
-  txt = txt.replace(/\bcuilleres?\s+a\s+soupe\b/g, ' ');
-  txt = txt.replace(/\bcuilleres?\s+a\s+cafe\b/g,  ' ');
+  txt = txt.replace(/\bcuilleres?\s+a\s+(?:soupe|table)\b/g, ' ');
+  txt = txt.replace(/\bcuilleres?\s+a\s+(?:cafe|the)\b/g,  ' ');
   // FR — formes longues sans "à"
-  txt = txt.replace(/\bcuilleres?\s+soupe\b/g, ' ');
-  txt = txt.replace(/\bcuilleres?\s+cafe\b/g,  ' ');
+  txt = txt.replace(/\bcuilleres?\s+(?:soupe|table)\b/g, ' ');
+  txt = txt.replace(/\bcuilleres?\s+(?:cafe|the)\b/g,  ' ');
   // FR — formes courtes avec "à"
-  txt = txt.replace(/\bcuils?\s+a\s+soupe\b/g, ' ');
-  txt = txt.replace(/\bcuils?\s+a\s+cafe\b/g,  ' ');
+  txt = txt.replace(/\bcuils?\s+a\s+(?:soupe|table)\b/g, ' ');
+  txt = txt.replace(/\bcuils?\s+a\s+(?:cafe|the)\b/g,  ' ');
   // FR — formes courtes sans "à"
-  txt = txt.replace(/\bcuils?\s+soupe\b/g, ' ');
-  txt = txt.replace(/\bcuils?\s+cafe\b/g,  ' ');
+  txt = txt.replace(/\bcuils?\s+(?:soupe|table)\b/g, ' ');
+  txt = txt.replace(/\bcuils?\s+(?:cafe|the)\b/g,  ' ');
   // FR — abréviations avec espaces : c.à.s. → c a s, c.s. → c s
   txt = txt.replace(/\bc\s+a\s+s\b/g, ' ');
   txt = txt.replace(/\bc\s+a\s+c\b/g, ' ');

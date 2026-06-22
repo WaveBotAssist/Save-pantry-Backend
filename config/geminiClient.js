@@ -30,11 +30,13 @@ const BASE_CONFIG = {
  * Appel Gemini unifié avec retry automatique sur les erreurs 503 (surcharge temporaire).
  * Tente jusqu'à 3 fois avec 2 secondes d'attente entre chaque essai.
  */
-// Timeout par tentative : 20s. Évite que le client mobile ferme la connexion
-// avant que le serveur réponde (provoque un "- - ms - -" dans les logs Morgan).
+// Timeout par tentative : 20s par défaut. Évite que le client mobile ferme la
+// connexion avant que le serveur réponde (provoque un "- - ms - -" dans les
+// logs Morgan). Surchargeable par appel (ex: planning 2 semaines — prompt et
+// maxOutputTokens nettement plus gros que le cas par défaut).
 const GEMINI_TIMEOUT_MS = 20_000;
 
-async function callGemini({ model, prompt, image, config = {} }, attempt = 1) {
+async function callGemini({ model, prompt, image, config = {}, timeoutMs = GEMINI_TIMEOUT_MS }, attempt = 1) {
   const parts = [];
   if (image) parts.push({ inlineData: { data: image.data, mimeType: image.mimeType } });
   parts.push({ text: prompt });
@@ -46,7 +48,7 @@ async function callGemini({ model, prompt, image, config = {} }, attempt = 1) {
       config:   { ...BASE_CONFIG, ...config },
     });
     const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Gemini timeout (attempt ${attempt})`)), GEMINI_TIMEOUT_MS)
+      setTimeout(() => reject(new Error(`Gemini timeout (attempt ${attempt})`)), timeoutMs)
     );
     const response = await Promise.race([apiCall, timeout]);
     // response.text est undefined avec gemini-2.5-flash quand la réponse contient
@@ -66,7 +68,7 @@ async function callGemini({ model, prompt, image, config = {} }, attempt = 1) {
     const isBadJson = err instanceof SyntaxError;
     if ((is503 || isBadJson) && attempt < 3) {
       await new Promise(resolve => setTimeout(resolve, 2000));
-      return callGemini({ model, prompt, image, config }, attempt + 1);
+      return callGemini({ model, prompt, image, config, timeoutMs }, attempt + 1);
     }
     throw err;
   }

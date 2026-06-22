@@ -121,6 +121,13 @@ const MOTS_QUANTITE = new Set([
  * de matching séparés : catalogue/favoris ici, fiche recette + planning côté front).
  */
 const QUALIFICATIFS_SIMPLES = new Set([
+  // Taille — "un gros oignon", "1 petit morceau de laurier" : la taille ne
+  // change jamais la nature du produit.
+  'gros', 'grosse', 'grosses',
+  'petit', 'petite', 'petits', 'petites',
+  'grand', 'grande', 'grands', 'grandes',
+  'moyen', 'moyenne', 'moyens', 'moyennes',
+  'big', 'large', 'small', 'medium', 'giant', 'tiny',
   // Couleurs / aspects
   'noir', 'noire', 'blanc', 'blanche', 'rouge', 'vert', 'verte', 'bleu',
   'jaune', 'rose', 'brun', 'brune', 'dore', 'doree',

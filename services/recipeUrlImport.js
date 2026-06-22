@@ -421,7 +421,7 @@ function extractFromHeuristics($, ogImage) {
     temps_preparation,
     portion,
     image: ogImage || '',
-    categorie: 'Autre',
+    categorie: inferCategory(null, titre, ingredients),
     confidence: 0.7,
   };
 }

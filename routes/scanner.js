@@ -86,7 +86,6 @@ router.post('/scan-receipt', scanRateLimit, validateScanRequest, aiCredits, asyn
     // ── Analyse Gemini ───────────────────────────────────────────────────────
 
     const geminiResult = await ApiGemini(ocrText);
-    console.log('reponse de api gemini', geminiResult);
 
     if (!Array.isArray(geminiResult?.items)) {
       await req.consumeCredit?.();

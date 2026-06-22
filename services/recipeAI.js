@@ -184,7 +184,7 @@ JSON uniquement :
       "date": "YYYY-MM-DD",
       "recipeTitle": "Nom du repas",
       "recipeId": "id_exact_de_la_liste",
-      "reason": "Utilise les courgettes et les œufs qui expirent demain"
+      "reason": "Courgettes et œufs à utiliser"
     }
   ],
   "missingIngredients": [
@@ -194,9 +194,18 @@ JSON uniquement :
 
 - date : date exacte depuis la liste ci-dessus (format YYYY-MM-DD)
 - recipeId : ID exact de la recette depuis la liste — jamais null, jamais inventé
-- reason : une phrase courte expliquant le choix
+- reason : 5 mots maximum, jamais une phrase complète
 - missingIngredients : ingrédients absents du stock nécessaires au planning`,
-    config: { temperature: 0.8, maxOutputTokens: dates.length > 7 ? 6144 : 3072 },
+    // maxOutputTokens : un simple doublement (6144) laissait trop peu de marge
+    // pour 14 jours — la moindre "reason" un peu longue suffisait à tronquer
+    // le JSON en plein milieu (SyntaxError au parsing, puis retry inutile sur
+    // le même budget trop juste). 16384 laisse une vraie marge (gratuit si non
+    // utilisé — Gemini facture les tokens générés, pas le plafond configuré).
+    // "reason" raccourci au prompt pour réduire la variance de longueur.
+    config: { temperature: 0.6, maxOutputTokens: dates.length > 7 ? 16384 : 4096 },
+    // Le planning 2 semaines envoie ~1,5x plus de recettes — le budget par
+    // défaut (20s) le faisait parfois timeout avant que Gemini ait fini.
+    timeoutMs: dates.length > 7 ? 38_000 : 20_000,
   });
 }
 

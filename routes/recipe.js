@@ -11,6 +11,9 @@ const { calculerCompatibilite } = require('../services/compatibilityService');
 const multer = require('multer');
 const { checkPremiumStatus } = require('../middlewares/checkPremium');
 const aiCredits = require('../middlewares/aiCredits');
+const recipeLimitMiddleware = require('../middlewares/recipeLimit');
+const { checkRecipeLimit } = require('../middlewares/recipeLimit'); // utilisé par /import-url, qui a déjà ses propres vérifications manuelles
+const { FREE_RECIPE_LIMIT } = require('../config/recipeLimits');
 
 
 // Multer pour lire le fichier en RAM (pas sur disque)
@@ -355,7 +358,8 @@ router.get('/personal', async (req, res) => {
 });
 
 // POST /recipe/personal — sauvegarde une recette personnelle (scan, import URL, manuelle)
-router.post('/personal', async (req, res) => {
+// recipeLimitMiddleware bloque si le compte gratuit a déjà atteint FREE_RECIPE_LIMIT recettes.
+router.post('/personal', recipeLimitMiddleware, async (req, res) => {
   try {
     const { titre, ingredients, instructions, image, categorie, langue, temps_preparation, portion, source, sourceUrl } = req.body;
 
@@ -469,7 +473,7 @@ router.post('/personal/import', async (req, res) => {
     const existing = await UserRecipe.find({ userId: req.user._id }).select('titre');
     const existingTitles = new Set(existing.map(r => r.titre.trim().toLowerCase()));
 
-    const toInsert = recipes
+    let toInsert = recipes
       .filter(r => r.titre && r.titre.trim() && !existingTitles.has(r.titre.trim().toLowerCase()))
       .map(({ titre, ingredients, instructions, image, categorie, langue, temps_preparation, portion, source, sourceUrl }) => ({
         userId: req.user._id,
@@ -485,13 +489,35 @@ router.post('/personal/import', async (req, res) => {
         sourceUrl: sourceUrl || '',
       }));
 
+    // Pas de blocage tout-ou-rien ici : on importe ce qui rentre dans la limite
+    // et on laisse le reste au frontend (qui le garde en local, rien n'est perdu).
+    const user = await User.findById(req.user._id);
+    const isPremium = await checkPremiumStatus(user);
+    let skippedLimit = 0;
+    if (!isPremium) {
+      const remaining = Math.max(0, FREE_RECIPE_LIMIT - existing.length);
+      if (toInsert.length > remaining) {
+        skippedLimit = toInsert.length - remaining;
+        toInsert = toInsert.slice(0, remaining);
+      }
+    }
+
     if (toInsert.length > 0) {
       await UserRecipe.insertMany(toInsert, { ordered: false });
       const io = req.app.get('io');
       io.to(`user-${req.user._id}`).emit('recipes-updated');
     }
 
-    return res.json({ result: true, added: toInsert.length });
+    return res.json({
+      result: true,
+      added: toInsert.length,
+      skippedLimit,
+      importedTitles: toInsert.map(r => r.titre.toLowerCase()),
+      // Titres déjà présents sur le compte avant cet import (doublons) — le frontend
+      // s'en sert pour distinguer "déjà sur le compte" (sûr à retirer du local) de
+      // "tronqué par la limite" (à garder en local, voir skippedLimit).
+      existingTitles: [...existingTitles],
+    });
   } catch (err) {
     console.error('❌ Erreur personal/bulk:', err);
     res.status(500).json({ result: false, error: err.message });
@@ -558,7 +584,7 @@ router.delete('/personal/:id', async (req, res) => {
    POST /recipe/generate — Génération IA d'une recette depuis le stock utilisateur
    Gemini invente une recette originale — aucune copie de source externe.
 ───────────────────────────────────────────────────────────────────────────── */
-router.post('/generate', aiCredits, async (req, res) => {
+router.post('/generate', recipeLimitMiddleware, aiCredits, async (req, res) => {
     try {
       let products;
 
@@ -609,7 +635,7 @@ router.post('/generate', aiCredits, async (req, res) => {
 ───────────────────────────────────────────────────────────────────────────── */
 const { extractRecipeFromImage, extractRecipeFromVideoText, generateRecipeFromStock } = require('../services/recipeAI');
 
-router.post('/scan', aiCredits, async (req, res) => {
+router.post('/scan', recipeLimitMiddleware, aiCredits, async (req, res) => {
   try {
     const { image, mimeType } = req.body;
 
@@ -658,6 +684,11 @@ router.post('/import-url', async (req, res) => {
       return res.status(400).json({ result: false, error: req.t('importUrlInvalid') });
     }
 
+    // Bloque avant toute extraction (IA ou JSON-LD) si la limite de recettes
+    // est déjà atteinte — inutile d'extraire une recette qui ne pourra pas être sauvegardée.
+    const recipeLimit = await checkRecipeLimit(req);
+    if (!recipeLimit.ok) return res.status(recipeLimit.status).json(recipeLimit.body);
+
     // Vidéo YouTube / Instagram / TikTok → extraction IA depuis le texte
     // (description + sous-titres, ou légende), consomme un crédit IA.
     const platform = detectVideoPlatform(url);
@@ -670,6 +701,7 @@ router.post('/import-url', async (req, res) => {
         });
       }
 
+      
       const quota = await checkAiQuota(req);
       if (!quota.ok) return res.status(quota.status).json(quota.body);
 
@@ -680,7 +712,8 @@ router.post('/import-url', async (req, res) => {
       if (!recipe.image && source.image) recipe.image = source.image;
 
       await quota.consumeCredit();
-      return res.json({ result: true, recipe, creditConsumed: true });
+      // platform : pour que le frontend sache si l'image vient d'un réseau social.
+      return res.json({ result: true, recipe, creditConsumed: true, platform });
     }
 
     // html fourni par le frontend (fetch depuis l'appareil) → pas de fetch serveur
@@ -753,6 +786,7 @@ const shareLimiter = rateLimit({
   max: 10,             // max 10 liens par minute par IP
   message: { result: false, message: 'Trop de demandes, réessayez dans une minute.' },
 });
+
 router.post('/share', shareLimiter, async (req, res) => {
   try {
     const { sourceUrl } = req.body;

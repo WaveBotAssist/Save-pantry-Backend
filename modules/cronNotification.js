@@ -97,6 +97,13 @@ cron.schedule("0 * * * *", async () => {
           continue;
         }
 
+        // Produit entièrement consommé (ex: déduit à 0 via "J'ai cuisiné") —
+        // rien à gaspiller, on ne notifie pas son expiration.
+        // On ne touche pas aux produits sans quantité renseignée (undefined).
+        if (typeof product.quantite === "number" && product.quantite <= 0) {
+          continue;
+        }
+
         const expirationDate = moment(product.expiration)
           .tz(timezone)
           .startOf("day");
@@ -256,6 +263,8 @@ cron.schedule('0 9 * * 1', async () => {
   for (let element of users) {
     const expiredProducts = element.myproducts.filter(p => {
       if (!p?.expiration) return false;           // Pas de date
+      // Produit entièrement consommé — rien à gaspiller, pas de rappel
+      if (typeof p.quantite === "number" && p.quantite <= 0) return false;
       const exp = new Date(p.expiration);
       if (isNaN(exp.getTime())) return false;     // Date invalide
       exp.setHours(0, 0, 0, 0);

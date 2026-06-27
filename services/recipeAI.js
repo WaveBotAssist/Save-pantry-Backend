@@ -10,7 +10,11 @@ const { callGemini, GEMINI_MODELS } = require('../config/geminiClient');
 
 // ─── Extraction depuis une image ──────────────────────────────────────────────
 
-async function extractRecipeFromImage(base64Image, mimeType = 'image/jpeg') {
+async function extractRecipeFromImage(base64Image, mimeType = 'image/jpeg', lang = 'fr') {
+  const langInstruction = lang === 'fr'
+    ? 'Réponds en français pour le titre, les noms d\'ingrédients et les instructions.'
+    : 'Respond in English for the title, ingredient names and instructions.';
+
   return callGemini({
     model: GEMINI_MODELS.flash,
     image: { data: base64Image, mimeType },
@@ -35,9 +39,11 @@ Règles :
 - instructions : étapes dans l'ordre, une étape par élément
 - temps_preparation : durée totale en minutes, UN SEUL NOMBRE ENTIER, jamais de texte ni de fourchette (null si non indiqué). Ex: "30-40 minutes" → 35
 - portion : nombre de personnes, UN SEUL NOMBRE ENTIER, jamais de texte ni de fourchette (null si non indiqué). Ex: "5 à 6 personnes" → 5
-- categorie : une seule valeur parmi — Petit-déjeuner, Brunch, Entrée, Plat principal, Viande, Pates, Riz, Salade, Soupe, Dessert, Collation, Apéritif, Déjeuner, Dîner, Boisson, Autre
+- categorie : une seule valeur parmi — Petit-déjeuner, Brunch, Entrée, Sauce, Plat principal, Viande, Pates, Riz, Salade, Soupe, Dessert, Collation, Apéritif, Déjeuner, Dîner, Boisson, Autre (toujours en français, quelle que soit la langue de réponse)
 - confidence : 0 (image illisible) → 1 (parfaitement lisible)
-- Si pas de recette : { "titre": "", "ingredients": [], "instructions": [], "confidence": 0 }`,
+- Si pas de recette : { "titre": "", "ingredients": [], "instructions": [], "confidence": 0 }
+
+${langInstruction}`,
     config: { temperature: 0.1 },
   });
 }
@@ -52,7 +58,11 @@ Règles :
  * @param {string} text     - Description et/ou sous-titres de la vidéo
  * @param {string} platform - 'youtube' | 'instagram' | 'tiktok' (pour le contexte du prompt)
  */
-async function extractRecipeFromVideoText(text, platform) {
+async function extractRecipeFromVideoText(text, platform, lang = 'fr') {
+  const langInstruction = lang === 'fr'
+    ? 'Réponds en français pour le titre, les noms d\'ingrédients et les instructions.'
+    : 'Respond in English for the title, ingredient names and instructions.';
+
   const recipe = await callGemini({
     model: GEMINI_MODELS.flashLite,
     prompt: `Voici le texte associé à une vidéo de recette de cuisine (${platform}) :
@@ -87,9 +97,11 @@ Règles :
 - instructions : étapes de préparation dans l'ordre, reformulées de façon claire et concise (pas de transcription mot à mot des hésitations orales)
 - temps_preparation : durée totale en minutes, UN SEUL NOMBRE ENTIER, jamais de texte ni de fourchette (null si non indiqué). Ex: "30-40 minutes" → 35
 - portion : nombre de personnes, UN SEUL NOMBRE ENTIER, jamais de texte ni de fourchette (null si non indiqué). Ex: "5 à 6 personnes" → 5
-- categorie : une seule valeur parmi — Petit-déjeuner, Brunch, Entrée, Plat principal, Viande, Pates, Riz, Salade, Soupe, Dessert, Collation, Apéritif, Déjeuner, Dîner, Boisson, Autre
+- categorie : une seule valeur parmi — Petit-déjeuner, Brunch, Entrée, Sauce, Plat principal, Viande, Pates, Riz, Salade, Soupe, Dessert, Collation, Apéritif, Déjeuner, Dîner, Boisson, Autre (toujours en français, quelle que soit la langue de réponse)
 - confidence : 0 (aucune recette identifiable dans ce texte) → 1 (recette complète et claire)
-- Si ce texte ne décrit aucune recette de cuisine : { "titre": "", "ingredients": [], "instructions": [], "confidence": 0 }`,
+- Si ce texte ne décrit aucune recette de cuisine : { "titre": "", "ingredients": [], "instructions": [], "confidence": 0 }
+
+${langInstruction}`,
     config: { temperature: 0.1 },
   });
 
@@ -259,7 +271,7 @@ Format si stock valide :
   "confidence": 1
 }
 
-categorie — exactement une valeur parmi : Petit-déjeuner | Brunch | Entrée | Plat principal | Viande | Pates | Riz | Salade | Soupe | Dessert | Collation | Apéritif | Déjeuner | Dîner | Boisson | Autre
+categorie — exactement une valeur parmi : Petit-déjeuner | Brunch | Entrée | Sauce | Plat principal | Viande | Pates | Riz | Salade | Soupe | Dessert | Collation | Apéritif | Déjeuner | Dîner | Boisson | Autre
 
 Format si stock invalide :
 { "erreur": "stock_invalide" }

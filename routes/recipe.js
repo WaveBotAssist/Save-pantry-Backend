@@ -643,7 +643,8 @@ router.post('/scan', recipeLimitMiddleware, aiCredits, async (req, res) => {
       return res.status(400).json({ result: false, error: 'Image base64 manquante.' });
     }
 
-    const recipe = await extractRecipeFromImage(image, mimeType || 'image/jpeg');
+    const lang = (req.headers['accept-language'] ?? 'fr').slice(0, 2);
+    const recipe = await extractRecipeFromImage(image, mimeType || 'image/jpeg', lang);
 
     // Si Gemini ne reconnaît pas de recette dans l'image
     if (!recipe.titre && recipe.confidence === 0) {
@@ -705,7 +706,8 @@ router.post('/import-url', async (req, res) => {
       const quota = await checkAiQuota(req);
       if (!quota.ok) return res.status(quota.status).json(quota.body);
 
-      const recipe = await extractRecipeFromVideoText(source.text, platform);
+      const lang = (req.headers['accept-language'] ?? 'fr').slice(0, 2);
+      const recipe = await extractRecipeFromVideoText(source.text, platform, lang);
       if (!recipe?.titre || recipe.confidence < 0.5 || !recipe.ingredients?.length) {
         return res.status(422).json({ result: false, error: req.t('importVideoNoRecipe') });
       }

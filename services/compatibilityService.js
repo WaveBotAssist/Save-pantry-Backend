@@ -127,6 +127,7 @@ const QUALIFICATIFS_SIMPLES = new Set([
   'petit', 'petite', 'petits', 'petites',
   'grand', 'grande', 'grands', 'grandes',
   'moyen', 'moyenne', 'moyens', 'moyennes',
+  'mini', 'maxi',
   'big', 'large', 'small', 'medium', 'giant', 'tiny',
   // Couleurs / aspects
   'noir', 'noire', 'blanc', 'blanche', 'rouge', 'vert', 'verte', 'bleu',

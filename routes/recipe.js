@@ -202,7 +202,6 @@ router.post('/submit', async (req, res) => {
       });
     }
 
-    
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ result: false, error: "Utilisateur introuvable." });

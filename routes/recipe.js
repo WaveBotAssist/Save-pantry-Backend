@@ -183,8 +183,8 @@ router.post('/myrecipes', async (req, res) => {
 });
 
 
-// Route pour soumettre une recette communautaire
-router.post('/submit', async (req, res) => {
+// Route pour soumettre une recette communautaire — réservé aux utilisateurs connectés
+router.post('/submit', checkToken, async (req, res) => {
   try {
     const {
       titre, categorie, langue, source, url, image,
@@ -215,10 +215,10 @@ router.post('/submit', async (req, res) => {
     console.log('📊 Statut Premium:', isPremium);
 
     // Limite pour les utilisateurs non premium
-    if (!isPremium && recipeCount >= 10) {
+    if (!isPremium && recipeCount >= FREE_RECIPE_LIMIT) {
       return res.status(403).json({
         result: false,
-        message: "Limite atteinte (10 recettes). Passez à la version Premium pour en ajouter davantage.",
+        message: `Limite atteinte (${FREE_RECIPE_LIMIT} recettes). Passez à la version Premium pour en ajouter davantage.`,
         canUpgrade: true,
       });
     }
@@ -288,7 +288,7 @@ router.get('/mod/pending', checkRole('admin'), async (req, res) => {
     const skip = (page - 1) * limit;
     const [items, total] = await Promise.all([
       Recipes.find({ status: 'pending' })
-        .select('_id titre image imageKey categorie langue tags ingredients instructions auteur createdAt')
+        .select('_id titre image categorie langue tags ingredients instructions auteur createdAt')
         .sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)),
       Recipes.countDocuments({ status: 'pending' }),
     ]);

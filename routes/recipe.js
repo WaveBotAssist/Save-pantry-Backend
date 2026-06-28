@@ -43,13 +43,15 @@ router.post('/r2/upload', checkToken, upload.single('file'), async (req, res) =>
   }
 });
 
-// Supprime une image R2 via sa clé — réservé aux utilisateurs premium connectés
+// Supprime une image R2 via sa clé — admin toujours autorisé, sinon réservé aux premium
 router.delete('/r2/delete/:key', async (req, res) => {
   try {
-    const user = await User.findById(req.user._id);
-    const isPremium = await checkPremiumStatus(user);
-    if (!isPremium) {
-      return res.status(403).json({ success: false, error: 'Reserve aux comptes premium.' });
+    if (req.user?.role !== 'admin') {
+      const user = await User.findById(req.user._id);
+      const isPremium = await checkPremiumStatus(user);
+      if (!isPremium) {
+        return res.status(403).json({ success: false, error: 'Reserve aux comptes premium.' });
+      }
     }
     await deleteFromR2(decodeURIComponent(req.params.key));
     res.json({ success: true });
@@ -222,7 +224,7 @@ router.post('/submit', async (req, res) => {
     }
 
     const imageUrl = image || '';
-
+     
     // Création de la recette
     const newRecipe = new Recipes({
       titre,
@@ -286,7 +288,7 @@ router.get('/mod/pending', checkRole('admin'), async (req, res) => {
     const skip = (page - 1) * limit;
     const [items, total] = await Promise.all([
       Recipes.find({ status: 'pending' })
-        .select('_id titre image categorie langue tags ingredients instructions auteur createdAt')
+        .select('_id titre image imageKey categorie langue tags ingredients instructions auteur createdAt')
         .sort({ createdAt: -1 }).skip(skip).limit(parseInt(limit)),
       Recipes.countDocuments({ status: 'pending' }),
     ]);

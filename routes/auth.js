@@ -140,8 +140,8 @@ router.post('/signin', loginLimiter, async (req, res) => {
       return res.status(400).json({ result: false, error: 'Email not verified' });
     }
 
-    // 🧠 Si utilisateur non premium : on vérifie s'il a déjà une session active
-    if (!user.isPremium) {
+    // 🧠 Si utilisateur non premium et non admin : on vérifie s'il a déjà une session active
+    if (!user.isPremium && user.role !== 'admin') {
       const activeSession = await Session.findOne({
         userId: user._id,
         revokedAt: null,
@@ -489,8 +489,8 @@ router.post('/google', async (req, res) => {
       });
     }
 
-    // 🧠 Si utilisateur non premium : on vérifie s'il a déjà une session active
-    if (!user.isPremium) {
+    // 🧠 Si utilisateur non premium et non admin : on vérifie s'il a déjà une session active
+    if (!user.isPremium && user.role !== 'admin') {
       const activeSession = await Session.findOne({
         userId: user._id,
         revokedAt: null,

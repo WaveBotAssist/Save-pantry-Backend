@@ -80,6 +80,14 @@ io.on('connection', (socket) => {
     console.log(`🔴 Socket ${socket.id} left planning-${userId}`);
   });
 
+  // Room device — permet de cibler un appareil précis pour révoquer sa session
+  socket.on('join-device', (deviceId) => {
+    socket.join(`device-${deviceId}`);
+  });
+  socket.on('leave-device', (deviceId) => {
+    socket.leave(`device-${deviceId}`);
+  });
+
   // 6) disconnect
   //    → Permet de log ou nettoyer si besoin.
   socket.on('disconnect', () => {

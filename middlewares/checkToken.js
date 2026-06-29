@@ -25,7 +25,7 @@ module.exports = async function checkToken(req, res, next) {
       tokenFingerprint: sha256(raw),
       expiresAt: { $gt: new Date() },
       $or: [{ revokedAt: { $exists: false } }, { revokedAt: null }]
-    }).select('userId tokenHash expiresAt');
+    }).select('userId tokenHash expiresAt deviceId');
 
     if (!session) {
       return res.status(401).json({
@@ -59,7 +59,7 @@ module.exports = async function checkToken(req, res, next) {
     // 5️⃣ RÉCUPÉRATION DES DONNÉES UTILISATEUR
     // ---------------------------------------------------------
     const user = await User.findById(session.userId)
-      .select('_id role isPremium revenuecatId premiumCheckedAt');
+      .select('_id role isPremium revenuecatId');
 
     if (!user) {
       return res.status(401).json({ error: 'User not found' });
@@ -84,32 +84,27 @@ module.exports = async function checkToken(req, res, next) {
         expiresAt: { $gt: new Date() }
       }).sort({ updatedAt: -1 }); // Trier par dernière utilisation
 
-      // Si plus d'une session active
+      // Si plus d'une session active → on garde uniquement la session courante
       if (activeSessions.length > 1) {
         console.log(`⚠️ User ${user._id} (non-premium) a ${activeSessions.length} sessions actives`);
 
-        // ✅ AMÉLIORATION : Vérifier si un achat est en cours
-        // On garde les sessions récentes (< 5 minutes) pour laisser le temps à la synchronisation
-        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-        
-        const recentSessions = activeSessions.filter(s => 
-          s.updatedAt > fiveMinutesAgo
-        );
-
-        // Si toutes les sessions sont récentes, c'est peut-être un achat en cours
-        if (recentSessions.length === activeSessions.length) {
-          console.log(`⏳ Toutes les sessions sont récentes (< 5min), peut-être un achat en cours`);
-          console.log(`✅ On garde toutes les sessions temporairement`);
-        } else {
-          // Sinon, on supprime les anciennes sessions (sauf la session actuelle)
-          await Session.deleteMany({
-            userId: user._id,
-            _id: { $ne: session._id },
-            updatedAt: { $lte: fiveMinutesAgo }
-          });
-
-          console.log(`🧹 Sessions anciennes supprimées pour user ${user._id}`);
+        // Notifie uniquement les appareils différents — évite d'envoyer
+        // session-revoked à l'appareil courant qui aurait une ancienne session en base
+        const io = req.app.get('io');
+        if (io) {
+          for (const s of activeSessions) {
+            if (s._id.toString() !== session._id.toString() && s.deviceId && s.deviceId !== session.deviceId) {
+              io.to(`device-${s.deviceId}`).emit('session-revoked');
+            }
+          }
         }
+
+        await Session.deleteMany({
+          userId: user._id,
+          _id: { $ne: session._id },
+        });
+
+        console.log(`🧹 Sessions supprimées pour user ${user._id} (non-premium)`);
       }
     } else {
       console.log(`✅ User ${user._id} est premium, sessions multiples autorisées`);

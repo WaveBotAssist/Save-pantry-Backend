@@ -95,18 +95,10 @@ router.post('/sync-premium', checkToken, async (req, res) => {
 
     console.log(`🔄 Synchronisation premium pour user ${user._id} (RC: ${user.revenuecatId})`);
 
-    // Guard TTL 5 min — évite de spammer RevenueCat si sync récente
-    const SYNC_CACHE_TTL_MS = 5 * 60 * 1000;
-    if (user.premiumCheckedAt && Date.now() - new Date(user.premiumCheckedAt).getTime() < SYNC_CACHE_TTL_MS) {
-      console.log('⚡ Cache récent (< 5 min), retour DB sans appel RevenueCat');
-      return res.json({ result: true, isPremium: user.isPremium, updated: false, fromCache: true });
-    }
-
     const isPremiumRevenueCat = await checkPremiumStatusWithRetry(user.revenuecatId, 1, 0);
 
     if (isPremiumRevenueCat === null) {
       console.log('⚠️ Pas de réponse RevenueCat, on retourne le statut DB');
-      await User.updateOne({ _id: user._id }, { premiumCheckedAt: new Date() });
       return res.json({
         result: true,
         isPremium: user.isPremium,
@@ -121,7 +113,7 @@ router.post('/sync-premium', checkToken, async (req, res) => {
     if (user.isPremium !== isPremiumRevenueCat) {
       await User.updateOne(
         { _id: user._id },
-        { isPremium: isPremiumRevenueCat, premiumCheckedAt: new Date() }
+        { isPremium: isPremiumRevenueCat }
       );
 
       console.log(`✅ Base de données mise à jour: ${user.isPremium} → ${isPremiumRevenueCat}`);
@@ -145,7 +137,6 @@ router.post('/sync-premium', checkToken, async (req, res) => {
       }
     } else {
       console.log('✅ Statut déjà synchronisé, aucune mise à jour nécessaire');
-      await User.updateOne({ _id: user._id }, { premiumCheckedAt: new Date() });
     }
 
     res.json({

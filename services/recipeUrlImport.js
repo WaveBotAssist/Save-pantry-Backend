@@ -155,9 +155,27 @@ function extractJsonLdBlocks(rawHtml) {
   return blocks;
 }
 
+// Correspondance directe rawCategory → catégorie canonique (FR + EN)
+const CANONICAL_MAP = {
+  'plat principal':'Plat principal','main course':'Plat principal','main dish':'Plat principal','plat':'Plat principal',
+  'entree':'Entrée','starter':'Entrée','appetizer':'Apéritif','apéritif':'Apéritif',
+  'soupe':'Soupe','soup':'Soupe',
+  'salade':'Salade','salad':'Salade',
+  'dessert':'Dessert','sweet':'Dessert',
+  'petit-dejeuner':'Petit-déjeuner','breakfast':'Petit-déjeuner',
+  'brunch':'Brunch',
+  'boisson':'Boisson','drink':'Boisson','beverage':'Boisson',
+  'sauce':'Sauce','dressing':'Sauce',
+  'pates':'Pates','pasta':'Pates',
+  'riz':'Riz','rice':'Riz',
+  'viande':'Viande','meat':'Viande',
+  'collation':'Collation','snack':'Collation',
+  'diner':'Dîner','dinner':'Dîner','supper':'Dîner',
+  'dejeuner':'Déjeuner','lunch':'Déjeuner',
+};
+
 // Catégories trop génériques — ne donnent pas d'info sur le type de plat
-const GENERIC_CATEGORIES = ['dinner','lunch','supper','meal','dish','recipe','food',
-  'main course','main dish','entree','plat','repas','cuisine'];
+const GENERIC_CATEGORIES = ['meal','dish','recipe','food','repas','cuisine'];
 
 // Mots-clés dans le titre/ingrédients → catégorie canonique
 // Ordre important : du plus spécifique au plus général
@@ -171,7 +189,7 @@ const KEYWORD_RULES = [
 
   {
     cat: 'Sauce',
-    re: /^(?!.*(?:soupe|potage|veloute|bouillon|bisque|gaspacho|gazpacho|minestrone|ramen|pho|chowder|broth|soup)).*(?:sauce|vinaigrette|mayonnaise|ketchup|moutarde|mustard|pesto|aioli|ailloli|bearnaise|béarnaise|hollandaise|bechamel|béchamel|espagnole|veloute|tomate|tomato\s*sauce|napolitaine|marinara|arrabiata|arrabbiata|bolognaise|bolognese|carbonara|alfredo|barbecue|bbq|teriyaki|soja|soy\s*sauce|nuoc[\s-]?mam|satay|gravy|jus\s*de\s*viande|reduction|coulis|salsa|guacamole|tzatziki|houmous|hummus|dip\b|chutney|relish|ragu|romesco|chimichurri|tapenade|pico\s*de\s*gallo|buffalo\s*sauce|sweet\s*chili|sriracha|harissa|tabasco|ponzu|hoisin|yakitori|worcestershire|cocktail\s*sauce|sauce\s*au\s*poivre|poivre\s*vert|forestiere|roquefort|fromagere|champignon|mornay|vierge|persillade|aigre[\s-]?douce|sweet\s*and\s*sour|cranberry\s*sauce|apple\s*sauce|mint\s*sauce|gribiche|ravigote|remoulade).*$/i
+    re: /^(?!.*(?:soupe|potage|veloute|bouillon|bisque|gaspacho|gazpacho|minestrone|ramen|pho|chowder|broth|soup)).*(?:sauce|vinaigrette|mayonnaise|ketchup|moutarde|mustard|pesto|aioli|ailloli|bearnaise|béarnaise|hollandaise|bechamel|béchamel|espagnole|veloute|tomato\s*sauce|sauce\s*tomate|napolitaine|marinara|arrabiata|arrabbiata|alfredo|barbecue|bbq|teriyaki|soja|soy\s*sauce|nuoc[\s-]?mam|satay|gravy|jus\s*de\s*viande|reduction|coulis|salsa|guacamole|tzatziki|houmous|hummus|dip\b|chutney|relish|ragu|romesco|chimichurri|tapenade|pico\s*de\s*gallo|buffalo\s*sauce|sweet\s*chili|sriracha|harissa|tabasco|ponzu|hoisin|yakitori|worcestershire|cocktail\s*sauce|sauce\s*au\s*poivre|poivre\s*vert|forestiere|roquefort|fromagere|champignon|mornay|vierge|persillade|aigre[\s-]?douce|sweet\s*and\s*sour|cranberry\s*sauce|apple\s*sauce|mint\s*sauce|gribiche|ravigote|remoulade).*$/i
   },
 
   {
@@ -191,7 +209,7 @@ const KEYWORD_RULES = [
 
   {
     cat: 'Dessert',
-    re: /gateau|cake|dessert|brownie|cookie|biscuit|muffin|cupcake|tiramisu|cheesecake|mousse|pudding|glace|sorbet|macaron|eclair|crepe\s*sucre|tarte\s*(sucre|tatin|aux|pomme|citron|fraise|framboise|chocolat)|fondant|clafoutis|flan|creme\s*brulee|financier|moelleux|profiterole|choux|meringue|bavarois|panna\s*cotta|crumble|cobbler|torte|strudel|pie\s*(aux|sucr|\bapple|\bcherry|\blemon)|apple\s*pie|lemon\s*pie|trifle|halva|baklava|compote/
+    re: /gateau|cake|dessert|brownie|cookie|biscuit|muffin|cupcake|tiramisu|cheesecake|mousse|pudding|glace|sorbet|macaron|eclair|crepe\s*sucre|tarte\s*(sucre|tatin|pomme|citron|fraise|framboise|chocolat|myrtille|abricot|peche|poire|cerise|rhubarbe|noix|noisette|amande|caramel|vanille|banane|mangue|ananas)|fondant|clafoutis|flan|creme\s*brulee|financier|moelleux|profiterole|choux|meringue|bavarois|panna\s*cotta|crumble|cobbler|torte|strudel|pie\s*(aux|sucr|\bapple|\bcherry|\blemon)|apple\s*pie|lemon\s*pie|trifle|halva|baklava|compote/
   },
 
   {
@@ -243,7 +261,7 @@ const KEYWORD_RULES = [
 
   {
     cat: 'Plat principal',
-    re: /gratin|quiche|tarte\s*sal|pizza|burger|tourte|clafoutis\s*sale|casserole|tajine|tagine|curry|wok|poele|fricassee|daube|ragoût|ragout|stew|ratatouille|cassoulet|omelette|frittata|croque[\s-]|hachis\s*parmentier|shepherd.s\s*pie|moussaka|lasagne|enchilada|burrito|wrap\b|pad\s*thai|chili\b|fish\s*and\s*chips|fried\s*chicken|stir[\s-]fry|pot\s*pie|farci|farcie|stuffed/
+    re: /gratin|quiche|tarte\s*sal|pizza|burger|sandwich|panini|tartine\s*grill|croque[\s-]|tourte|clafoutis\s*sale|casserole|tajine|tagine|curry|wok|poele|fricassee|daube|ragoût|ragout|stew|ratatouille|cassoulet|omelette|frittata|hachis\s*parmentier|shepherd.s\s*pie|moussaka|lasagne|enchilada|burrito|wrap\b|pad\s*thai|chili\b|fish\s*and\s*chips|fried\s*chicken|stir[\s-]fry|pot\s*pie|farci|farcie|stuffed/
   }
 
 ];
@@ -257,9 +275,10 @@ const KEYWORD_RULES = [
 function categorizeRecipe(rawCategory, titre, ingredients) {
   const norm = (str) => (str || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
-  // Étape 1 : catégorie JSON-LD — utilisée seulement si non générique
+  // Étape 1 : correspondance directe avec les catégories canoniques
   if (rawCategory) {
-    const rawLow = norm(rawCategory).replace(/s$/, '');
+    const rawLow = norm(rawCategory).replace(/s$/, '').trim();
+    if (CANONICAL_MAP[rawLow]) return CANONICAL_MAP[rawLow];
     const isGeneric = GENERIC_CATEGORIES.some(g => rawLow.includes(g));
     if (!isGeneric) {
       for (const { cat, re } of KEYWORD_RULES) {
@@ -284,7 +303,8 @@ function categorizeRecipe(rawCategory, titre, ingredients) {
     }
   }
 
-  return 'Autre';
+  // Fallback : la plupart des recettes non identifiées sont des plats principaux
+  return 'Plat principal';
 }
 
 function extractFromJsonLd($, ogImage, rawHtml) {

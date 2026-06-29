@@ -1,60 +1,65 @@
 const fetch = require('node-fetch');
 const User = require('../models/users');
+// Ne rappelle pas RevenueCat si la dernière vérification date de moins de 15 min
+const CACHE_TTL_MS = 15 * 60 * 1000;
 
 /**
- * 🔐 Vérifie le statut Premium avec double check RevenueCat
- * Si la DB dit "pas premium", on vérifie en temps réel avec RevenueCat
+ * Vérifie le statut premium avec cache TTL 15 min côté backend.
+ * Appelle RevenueCat seulement si le cache est périmé ou absent.
  */
 const checkPremiumStatus = async (user) => {
-  let isPremium = user.isPremium;
+  // DB dit premium → retour immédiat, aucun appel RC
+  if (user.isPremium) return true;
 
-  // Si la DB dit déjà premium, pas besoin de vérifier
-  if (isPremium) {
-    return true;
+  // DB dit free mais vérification récente → retour cache, aucun appel RC
+  if (user.premiumCheckedAt && Date.now() - new Date(user.premiumCheckedAt).getTime() < CACHE_TTL_MS) {
+    return false;
   }
 
-  // Double-check avec RevenueCat si la DB dit "pas premium"
-  if (!isPremium && user.revenuecatId) {
-    console.log('🔍 Double-check RevenueCat pour', user.username || user.email);
-    
-    try {
-      const response = await fetch(
-        `https://api.revenuecat.com/v1/subscribers/${user.revenuecatId}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${process.env.REVENUECAT_SECRET_KEY}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+  if (!user.revenuecatId) return false;
 
-      if (response.ok) {
-        const data = await response.json();
-        
-        // Vérifier si premium est actif
-        isPremium =
-          !!data.subscriber?.entitlements?.premium?.expires_date &&
-          new Date(data.subscriber.entitlements.premium.expires_date) > new Date();
+  console.log('🔍 Double-check RevenueCat pour', user._id);
 
-        if (isPremium) {
-          console.log('✅ Premium confirmé par RevenueCat, mise à jour DB');
-          
-          // Mettre à jour la DB pour la prochaine fois
-          await User.updateOne(
-            { _id: user._id },
-            { isPremium: true }
-          );
+  let isPremium = false;
+
+  try {
+    const response = await fetch(
+      `https://api.revenuecat.com/v1/subscribers/${user.revenuecatId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.REVENUECAT_SECRET_KEY}`,
+          'Content-Type': 'application/json'
         }
-      } else {
-        console.warn('⚠️ Erreur API RevenueCat:', response.status);
       }
-    } catch (err) {
-      console.error('⚠️ Erreur vérification RevenueCat:', err.message);
-      // On continue avec isPremium de la DB
+    );
+
+    if (response.ok) {
+      const data = await response.json();
+
+      isPremium =
+        !!data.subscriber?.entitlements?.premium?.expires_date &&
+        new Date(data.subscriber.entitlements.premium.expires_date) > new Date();
+
+      const update = { premiumCheckedAt: new Date() };
+      if (isPremium) {
+        update.isPremium = true;
+        console.log('✅ Premium confirmé par RevenueCat, mise à jour DB');
+      }
+      await User.updateOne({ _id: user._id }, update);
+    } else {
+      console.warn('⚠️ Erreur API RevenueCat:', response.status);
+      // On horodate quand même pour éviter de spammer RC en cas d'erreur
+      await User.updateOne({ _id: user._id }, { premiumCheckedAt: new Date() });
     }
+  } catch (err) {
+    console.error('⚠️ Erreur vérification RevenueCat:', err.message);
+    await User.updateOne({ _id: user._id }, { premiumCheckedAt: new Date() });
   }
 
   return isPremium;
 };
 
 module.exports = { checkPremiumStatus };
+
+
+

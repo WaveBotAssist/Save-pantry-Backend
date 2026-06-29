@@ -59,7 +59,7 @@ module.exports = async function checkToken(req, res, next) {
     // 5️⃣ RÉCUPÉRATION DES DONNÉES UTILISATEUR
     // ---------------------------------------------------------
     const user = await User.findById(session.userId)
-      .select('_id role isPremium revenuecatId');
+      .select('_id role isPremium revenuecatId premiumCheckedAt');
 
     if (!user) {
       return res.status(401).json({ error: 'User not found' });

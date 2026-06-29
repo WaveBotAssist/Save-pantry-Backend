@@ -92,11 +92,9 @@ router.post('/create-and-share', async (req, res) => {
 
     const io = req.app.get("io");
     await emitListUpdated(io, newList._id);
-    // Notifie chaque membre partagé (sauf le propriétaire) via sa room personnelle
+    // Notifie tous les membres + les autres appareils du propriétaire (même compte premium)
     for (const member of sharedWithCleaned) {
-      if (!member.userId.equals(owner._id)) {
-        io.to(`user-${member.userId}`).emit("list-shared", { listId: newList._id });
-      }
+      io.to(`user-${member.userId}`).emit("list-shared", { listId: newList._id });
     }
 
     // 🔔 Notifications

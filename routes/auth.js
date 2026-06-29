@@ -29,7 +29,6 @@ const { genCode, hash, compare } = require('../utils/otp');
 const { sendEmailOtp, sendPasswordResetOtp } = require('../services/mailer');
 const { requestEmailOtpFor } = require('../services/emailOtpService');
 
-
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
 
 

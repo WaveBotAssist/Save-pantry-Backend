@@ -254,7 +254,7 @@ const KEYWORD_RULES = [
  *   2. Le titre de la recette (le plus fiable)
  *   3. Les 3 premiers ingrédients (fallback)
  */
-function inferCategory(rawCategory, titre, ingredients) {
+function categorizeRecipe(rawCategory, titre, ingredients) {
   const norm = (str) => (str || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
   // Étape 1 : catégorie JSON-LD — utilisée seulement si non générique
@@ -315,7 +315,7 @@ function extractFromJsonLd($, ogImage, rawHtml) {
       temps_preparation: parseIsoDuration(recipe.prepTime) || parseIsoDuration(recipe.totalTime),
       portion:           parseRecipeYield(recipe.recipeYield),
       image:             parseRecipeImage(recipe.image) || ogImage || '',
-      categorie:         inferCategory(
+      categorie:         categorizeRecipe(
         decodeEntities(Array.isArray(recipe.recipeCategory) ? recipe.recipeCategory[0] : (recipe.recipeCategory || '')),
         titre,
         ingredients
@@ -421,7 +421,7 @@ function extractFromHeuristics($, ogImage) {
     temps_preparation,
     portion,
     image: ogImage || '',
-    categorie: inferCategory(null, titre, ingredients),
+    categorie: categorizeRecipe(null, titre, ingredients),
     confidence: 0.7,
   };
 }
@@ -520,6 +520,7 @@ async function extractRecipeFromUrl(url) {
 module.exports = {
   extractRecipeFromUrl,
   extractRecipeFromHtml,
+  categorizeRecipe,
   // Réutilisés par videoRecipeImport.js (YouTube/Instagram/TikTok)
   BASE_HEADERS,
   decodeEntities,

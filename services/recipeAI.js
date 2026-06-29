@@ -7,6 +7,7 @@
  */
 
 const { callGemini, GEMINI_MODELS } = require('../config/geminiClient');
+const { categorizeRecipe } = require('./recipeUrlImport');
 
 // ─── Extraction depuis une image ──────────────────────────────────────────────
 
@@ -35,7 +36,7 @@ Format attendu :
 
 Règles :
 - titre : nom principal de la recette
-- ingredients : TOUS les ingrédients avec quantité et unité. Si la liste n'est pas visible mais que les instructions les mentionnent, déduis-les depuis le texte des étapes. Ne laisse jamais ce tableau vide si la recette est identifiable.
+- ingredients : TOUS les ingrédients avec quantité et unité, traduits dans la même langue que le titre et les instructions. Si la liste n'est pas visible mais que les instructions les mentionnent, déduis-les depuis le texte des étapes. Ne laisse jamais ce tableau vide si la recette est identifiable.
 - instructions : étapes dans l'ordre, une étape par élément
 - temps_preparation : durée totale en minutes, UN SEUL NOMBRE ENTIER, jamais de texte ni de fourchette (null si non indiqué). Ex: "30-40 minutes" → 35
 - portion : nombre de personnes, UN SEUL NOMBRE ENTIER, jamais de texte ni de fourchette (null si non indiqué). Ex: "5 à 6 personnes" → 5
@@ -45,7 +46,10 @@ Règles :
 
 ${langInstruction}`,
     config: { temperature: 0.1 },
-  });
+  }).then(recipe => ({
+    ...recipe,
+    categorie: categorizeRecipe(recipe.categorie, recipe.titre, recipe.ingredients?.map(i => i.name)),
+  }));
 }
 
 
@@ -93,7 +97,7 @@ Format attendu :
 
 Règles :
 - titre : nom de la recette préparée dans la vidéo
-- ingredients : TOUS les ingrédients mentionnés, avec quantité et unité séparées. Si une quantité n'est pas précisée, laisse "quantity" et "unit" vides ("").
+- ingredients : TOUS les ingrédients mentionnés, avec quantité et unité séparées. Traduis les noms d'ingrédients dans la même langue que le titre et les instructions. Si une quantité n'est pas précisée, laisse "quantity" et "unit" vides ("").
 - instructions : étapes de préparation dans l'ordre, reformulées de façon claire et concise (pas de transcription mot à mot des hésitations orales)
 - temps_preparation : durée totale en minutes, UN SEUL NOMBRE ENTIER, jamais de texte ni de fourchette (null si non indiqué). Ex: "30-40 minutes" → 35
 - portion : nombre de personnes, UN SEUL NOMBRE ENTIER, jamais de texte ni de fourchette (null si non indiqué). Ex: "5 à 6 personnes" → 5
@@ -112,6 +116,7 @@ ${langInstruction}`,
     ...recipe,
     temps_preparation: toIntOrNull(recipe.temps_preparation),
     portion: toIntOrNull(recipe.portion),
+    categorie: categorizeRecipe(recipe.categorie, recipe.titre, recipe.ingredients?.map(i => i.name)),
   };
 }
 

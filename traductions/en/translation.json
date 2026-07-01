@@ -7,6 +7,8 @@
     "today_many": "⚠️ Heads up: {{count}} items expire today.",
     "soon_names": "🕑 Reminder: {{names}} expire(s) in 3 days.",
     "soon_many": "🕑 Reminder: {{count}} items expire in 3 days.",
+    "tomorrow_names": "⏳ {{names}} expires tomorrow!",
+    "tomorrow_many": "⏳ {{count}} items expire tomorrow!",
     "Headsup": "Stock Alert",
     "expired_reminder": "⚠️ You still have {{count}} expired items in your stock.",
     "insufficientStock": "Not enough stock for the added quantities",

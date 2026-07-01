@@ -51,7 +51,7 @@ cron.schedule("0 * * * *", async () => {
 
       const userLang = user.language || "fr";
       i18next.changeLanguage(userLang);
-
+      
       // ----------------------------------------------------------------------
       // Fuseau horaire utilisateur
       // ----------------------------------------------------------------------
@@ -161,20 +161,23 @@ cron.schedule("0 * * * *", async () => {
       const segments = [];
 
       if (productsExpired.length > 0) {
-        segments.push(
-          `⚠️ ${productsExpired.length} produit(s) sont expirés`
+        segments.push(productsExpired.length === 1
+          ? i18next.t("expired_names", { names: productsExpired[0] })
+          : i18next.t("expired_many",  { count: productsExpired.length })
         );
       }
 
       if (productsJ1.length > 0) {
-        segments.push(
-          `⏳ ${productsJ1.length} produit(s) expirent demain`
+        segments.push(productsJ1.length === 1
+          ? i18next.t("tomorrow_names", { names: productsJ1[0] })
+          : i18next.t("tomorrow_many",  { count: productsJ1.length })
         );
       }
 
       if (productsJ3.length > 0) {
-        segments.push(
-          `📅 ${productsJ3.length} produit(s) expirent dans 3 jours`
+        segments.push(productsJ3.length === 1
+          ? i18next.t("soon_names", { names: productsJ3[0] })
+          : i18next.t("soon_many",  { count: productsJ3.length })
         );
       }
 

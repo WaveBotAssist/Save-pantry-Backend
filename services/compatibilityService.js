@@ -163,6 +163,7 @@ const QUALIFICATIFS_SIMPLES = new Set([
   'coupe', 'coupee', 'coupes', 'coupees',
   'ecrase', 'ecrasee', 'ecrases', 'ecrasees',
   'mixe', 'mixee', 'mixes', 'mixees',
+  'cru', 'crue', 'crus', 'crues',
   'cuit', 'cuite', 'cuits', 'cuites',
   'grille', 'grillee', 'grilles', 'grillees',
   'epluchee', 'epluche', 'epluches', 'epluchees',
@@ -183,7 +184,7 @@ const QUALIFICATIFS_SIMPLES = new Set([
   'melted', 'beaten', 'grated', 'chopped', 'minced', 'sliced',
   'crushed', 'mashed', 'cooked', 'grilled', 'peeled', 'sifted',
   'organic', 'free', 'range', 'farm',
-  'frozen', 'thawed', 'shredded', 'crumbled',
+  'frozen', 'thawed', 'shredded', 'crumbled', 'raw',
 ]);
 
 // ─── Appellations produit ───────────────────────────────────────────────────

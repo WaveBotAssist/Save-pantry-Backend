@@ -7,6 +7,8 @@
     "today_many": "⚠️ Attention : {{count}} produits expirent aujourd’hui.",
     "soon_names": "🕑 Petit rappel : {{names}} expire(nt) dans 3 jours.",
     "soon_many": "🕑 Petit rappel : {{count}} produits expirent dans 3 jours.",
+    "tomorrow_names": "⏳ {{names}} expire demain !",
+    "tomorrow_many": "⏳ {{count}} produits expirent demain !",
     "Headsup": "Alerte stock",
     "expired_reminder": "⚠️ Vous avez encore {{count}} produits périmés dans votre stock.",
     "insufficientStock": "Pas assez en stock pour les quantités ajoutées",
